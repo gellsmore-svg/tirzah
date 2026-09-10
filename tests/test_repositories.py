@@ -9,6 +9,8 @@ from tirzah.db.repositories import (
     commit_ingestion,
     create_reviewed_semantic_edge,
     document_tree,
+    enqueue_contradiction_candidate_batch,
+    enqueue_contradiction_candidates,
     enqueue_semantic_edge_candidates,
     enqueue_vector_semantic_edge_candidate_batch,
     enqueue_vector_semantic_edge_candidates,
@@ -1004,6 +1006,165 @@ def test_enqueue_vector_semantic_edge_candidates_stores_similarity_review_rows(m
     assert duplicate["skipped_existing_count"] == 1
 
 
+def test_enqueue_contradiction_candidates_stores_dates_and_provenance(monkeypatch) -> None:
+    source_id = ObjectId()
+    target_id = ObjectId()
+    document_id = ObjectId()
+    db = FakeDb()
+    db.nodes.rows.append(
+        {
+            "_id": source_id,
+            "document_id": document_id,
+            "tree_id": ObjectId(),
+            "node_key": "source",
+            "title": "Source",
+            "labels": ["ams_domain"],
+            "origin_date": "2020-01-01",
+            "origin_date_source": "filename",
+            "origin_date_confidence": 0.9,
+            "provenance": {"source_path": "archive/source.md", "adapter": "mock"},
+        }
+    )
+
+    monkeypatch.setattr(
+        "tirzah.retrieval.contradictions.contradiction_candidate_nodes",
+        lambda _db, node_id, limit=10, include_same_document=False, min_similarity=0.82, max_similarity=0.97, **_kwargs: [
+            {
+                "node_id": str(target_id),
+                "document_id": str(ObjectId()),
+                "node_key": "target",
+                "title": "Target",
+                "shared_labels": ["ams_domain"],
+                "shared_label_count": 1,
+                "embedding_similarity": 0.9,
+                "embedding_model": "mock",
+                "embedding_dimensions": 16,
+                "candidate_source": "contradiction_signals",
+                "contradiction_signals": {
+                    "shared_semantic_labels": True,
+                    "origin_date_delta": True,
+                    "conflict_lexicon": True,
+                    "cue_count": 3,
+                    "meets_conservative_bar": True,
+                    "shared_labels": ["ams_domain"],
+                    "conflict_terms": ["contrary"],
+                    "origin_date_delta_days": 1613,
+                },
+                "source_origin_date": "2020-01-01",
+                "source_origin_date_source": "filename",
+                "source_origin_date_confidence": 0.9,
+                "target_origin_date": "2024-06-01",
+                "target_origin_date_source": "header",
+                "target_origin_date_confidence": 0.7,
+                "origin_date_delta_days": 1613,
+                "source_provenance": {"source_path": "archive/source.md", "adapter": "mock"},
+                "target_provenance": {"source_path": "archive/target.md", "adapter": "mock"},
+            }
+        ],
+    )
+
+    result = enqueue_contradiction_candidates(
+        db,
+        node_id=str(source_id),
+        created_by="cello",
+        min_similarity=0.82,
+    )
+
+    assert result["ok"] is True
+    assert result["candidate_source"] == "contradiction_signals"
+    assert result["relation_type"] == "contradicts"
+    assert result["enqueued_count"] == 1
+    row = db.semantic_edge_candidates.rows[0]
+    assert row["status"] == "pending"
+    assert row["relation_type"] == "contradicts"
+    assert row["pair_key"] == semantic_edge_candidate_pair_key(source_id, target_id, "contradicts")
+    assert row["source_origin_date"] == "2020-01-01"
+    assert row["target_origin_date"] == "2024-06-01"
+    assert row["origin_date_delta_days"] == 1613
+    assert row["source_provenance"]["source_path"] == "archive/source.md"
+    assert row["target_provenance"]["source_path"] == "archive/target.md"
+    assert row["contradiction_signals"]["cue_count"] == 3
+    assert row["selection_context"]["min_cues"] == 2
+
+    duplicate = enqueue_contradiction_candidates(db, node_id=str(source_id))
+    assert duplicate["enqueued_count"] == 0
+    assert duplicate["skipped_existing_count"] == 1
+
+
+def test_semantic_edge_candidate_exists_uses_pair_key_for_contradicts_reciprocals() -> None:
+    source_id = ObjectId()
+    target_id = ObjectId()
+    db = FakeDb()
+    db.semantic_edge_candidates.rows.append(
+        {
+            "source_node_id": source_id,
+            "target_node_id": target_id,
+            "relation_type": "contradicts",
+            "pair_key": semantic_edge_candidate_pair_key(source_id, target_id, "contradicts"),
+        }
+    )
+
+    assert semantic_edge_candidate_exists(db, target_id, source_id, "contradicts") is True
+    assert semantic_edge_candidate_exists(db, source_id, target_id, "related_to") is False
+
+
+def test_enqueue_contradiction_candidate_batch_dry_run_does_not_insert(monkeypatch) -> None:
+    source_id = ObjectId()
+    target_id = ObjectId()
+    db = FakeDb()
+    db.nodes.rows.append(
+        {
+            "_id": source_id,
+            "node_key": "source-1",
+            "title": "Source One",
+            "labels": ["ams_domain"],
+            "text": "Endorsement is required.",
+            "embedding": {"model": "mock", "dimensions": 2},
+        }
+    )
+    monkeypatch.setattr(
+        "tirzah.retrieval.contradictions.contradiction_candidate_nodes",
+        lambda _db, node_id, **_kwargs: [
+            {
+                "node_id": str(target_id),
+                "document_id": str(ObjectId()),
+                "node_key": "target",
+                "title": "Target",
+                "text_preview": "The later memo is contrary.",
+                "embedding_similarity": 0.9,
+                "candidate_source": "contradiction_signals",
+                "contradiction_signals": {
+                    "cue_count": 2,
+                    "shared_semantic_labels": True,
+                    "origin_date_delta": True,
+                    "conflict_lexicon": False,
+                },
+                "source_origin_date": "2020-01-01",
+                "target_origin_date": "2024-01-01",
+                "origin_date_delta_days": 1461,
+                "source_provenance": {"source_path": "archive/source.md"},
+                "target_provenance": {"source_path": "archive/target.md"},
+            }
+        ],
+    )
+
+    result = enqueue_contradiction_candidate_batch(
+        db,
+        label="ams_domain",
+        dry_run=True,
+        candidates_per_node=1,
+    )
+
+    assert result["ok"] is True
+    assert result["would_enqueue_count"] == 1
+    assert result["enqueued_count"] == 0
+    assert db.semantic_edge_candidates.rows == []
+    preview = result["focus_results"][0]["candidate_previews"][0]
+    assert preview["target_node_id"] == str(target_id)
+    assert preview["origin_date_delta_days"] == 1461
+    assert "possible contradiction" in preview["review_hint"]
+
+
 def test_semantic_edge_candidate_exists_uses_pair_key_for_related_to_reciprocals() -> None:
     source_id = ObjectId()
     target_id = ObjectId()
@@ -1448,6 +1609,16 @@ def test_list_semantic_edge_candidates_serializes_pending_rows() -> None:
                 "larger_text_overlap": 0.8,
             },
             "review_hint": "Review hint: high shared wording; check for copied or near-copied source text before accepting.",
+            "source_origin_date": None,
+            "source_origin_date_source": None,
+            "source_origin_date_confidence": None,
+            "target_origin_date": None,
+            "target_origin_date_source": None,
+            "target_origin_date_confidence": None,
+            "origin_date_delta_days": None,
+            "source_provenance": {},
+            "target_provenance": {},
+            "contradiction_signals": {},
             "created_by": "user",
             "reviewer": None,
             "review_note": None,
@@ -1545,6 +1716,80 @@ def test_review_semantic_edge_candidate_accepts_and_creates_edge() -> None:
         "embedding_model": "mock",
         "embedding_dimensions": 16,
     }
+
+
+def test_review_contradiction_candidate_accepts_contradicts_edge() -> None:
+    source_id = ObjectId()
+    target_id = ObjectId()
+    candidate_id = ObjectId()
+    db = FakeDb()
+    db.nodes.rows.extend(
+        [
+            {
+                "_id": source_id,
+                "document_id": ObjectId(),
+                "tree_id": ObjectId(),
+                "node_key": "source",
+                "title": "Source",
+                "text": "Endorsement is required before retrieval.",
+                "labels": ["ams_domain"],
+                "origin_date": "2020-01-01",
+                "provenance": {"source_path": "archive/source.md"},
+            },
+            {
+                "_id": target_id,
+                "document_id": ObjectId(),
+                "tree_id": ObjectId(),
+                "node_key": "target",
+                "title": "Target",
+                "text": "The later memo is contrary: endorsement is optional.",
+                "labels": ["ams_domain"],
+                "origin_date": "2024-06-01",
+                "provenance": {"source_path": "archive/target.md"},
+            },
+        ]
+    )
+    db.semantic_edge_candidates.rows.append(
+        {
+            "_id": candidate_id,
+            "status": "pending",
+            "source_node_id": source_id,
+            "target_node_id": target_id,
+            "relation_type": "contradicts",
+            "candidate_source": "contradiction_signals",
+            "embedding_similarity": 0.9,
+            "source_origin_date": "2020-01-01",
+            "target_origin_date": "2024-06-01",
+            "origin_date_delta_days": 1613,
+            "source_provenance": {"source_path": "archive/source.md"},
+            "target_provenance": {"source_path": "archive/target.md"},
+            "contradiction_signals": {
+                "shared_semantic_labels": True,
+                "origin_date_delta": True,
+                "conflict_lexicon": True,
+                "cue_count": 3,
+            },
+        }
+    )
+
+    result = review_semantic_edge_candidate(
+        db,
+        candidate_id=str(candidate_id),
+        action="accept",
+        reviewer="cello",
+        note="These claims conflict.",
+    )
+
+    assert result["ok"] is True
+    assert result["edge"]["relation_type"] == "contradicts"
+    assert result["candidate"]["status"] == "accepted"
+    assert "possible contradiction" in result["candidate"]["review_hint"]
+    assert result["candidate"]["source_origin_date"] == "2020-01-01"
+    assert result["candidate"]["target_origin_date"] == "2024-06-01"
+    assert result["edge"]["provenance"]["candidate_source"] == "contradiction_signals"
+    assert result["edge"]["provenance"]["contradiction_signals"]["cue_count"] == 3
+    assert result["edge"]["provenance"]["source_origin_date"] == "2020-01-01"
+    assert result["edge"]["provenance"]["target_provenance"]["source_path"] == "archive/target.md"
 
 
 def test_review_semantic_edge_candidate_rejects_pending_candidate() -> None:

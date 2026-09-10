@@ -58,6 +58,8 @@ from tirzah.db.indexes import ensure_indexes
 from tirzah.db.serializers import serialize_queue_job, serialize_queue_summary
 from tirzah.db.repositories import (
     backfill_node_embeddings,
+    enqueue_contradiction_candidate_batch,
+    enqueue_contradiction_candidates,
     enqueue_semantic_edge_candidates,
     enqueue_vector_semantic_edge_candidate_batch,
     enqueue_vector_semantic_edge_candidates,
@@ -88,6 +90,7 @@ from tirzah.retrieval.queries import (
     list_documents,
     search_nodes,
 )
+from tirzah.retrieval.contradictions import contradiction_candidate_report
 from tirzah.retrieval.trust import trust_temporal_diagnostic_for_node
 from tirzah.sessions.exchanges import recent_exchanges
 from tirzah.sessions.interaction import (
@@ -227,6 +230,7 @@ class EnqueueSemanticEdgeCandidatesRequest(BaseModel):
     relation_type: str = "related_to"
     created_by: str = "web"
     min_similarity: float = 0.75
+    max_similarity: float = 0.97
     limit: int = 10
     candidate_scan_limit: int | None = None
 
@@ -240,6 +244,20 @@ class EnqueueVectorSemanticBatchRequest(BaseModel):
     relation_type: str = "related_to"
     created_by: str = "web"
     min_similarity: float = 0.75
+    candidate_scan_limit: int | None = None
+    exclude_node_keys: list[str] = []
+    dry_run: bool = True
+
+
+class EnqueueContradictionBatchRequest(BaseModel):
+    label: str | None = None
+    document_id: str | None = None
+    focus_limit: int = 25
+    candidates_per_node: int = 2
+    include_same_document: bool = False
+    created_by: str = "web"
+    min_similarity: float = 0.82
+    max_similarity: float = 0.97
     candidate_scan_limit: int | None = None
     exclude_node_keys: list[str] = []
     dry_run: bool = True
@@ -822,6 +840,7 @@ def create_app() -> FastAPI:
     def semantic_edge_candidates(
         limit: int = 20,
         status: str | None = "pending",
+        relation_type: str | None = None,
     ) -> dict[str, Any]:
         return {
             "ok": True,
@@ -829,6 +848,7 @@ def create_app() -> FastAPI:
                 db,
                 status=status,
                 limit=limit,
+                relation_type=relation_type,
             ),
         }
 
@@ -865,6 +885,17 @@ def create_app() -> FastAPI:
                 min_similarity=request.min_similarity,
                 candidate_scan_limit=request.candidate_scan_limit,
             )
+        if source in {"contradiction_signals", "contradicts"}:
+            return enqueue_contradiction_candidates(
+                db,
+                node_id=request.node_id,
+                limit=request.limit,
+                include_same_document=request.include_same_document,
+                created_by=request.created_by,
+                min_similarity=request.min_similarity,
+                max_similarity=request.max_similarity,
+                candidate_scan_limit=request.candidate_scan_limit,
+            )
         if source == "label_overlap":
             return enqueue_semantic_edge_candidates(
                 db,
@@ -894,6 +925,44 @@ def create_app() -> FastAPI:
             relation_type=request.relation_type,
             created_by=request.created_by,
             min_similarity=request.min_similarity,
+            candidate_scan_limit=request.candidate_scan_limit,
+            exclude_node_keys=request.exclude_node_keys,
+            dry_run=request.dry_run,
+        )
+
+    @app.get("/api/review/contradiction-candidates")
+    def contradiction_candidates(
+        node_id: str,
+        limit: int = 10,
+        include_same_document: bool = False,
+        min_similarity: float = 0.82,
+        max_similarity: float = 0.97,
+        candidate_scan_limit: int | None = None,
+    ) -> dict[str, Any]:
+        return contradiction_candidate_report(
+            db,
+            node_id=node_id,
+            limit=limit,
+            include_same_document=include_same_document,
+            min_similarity=min_similarity,
+            max_similarity=max_similarity,
+            candidate_scan_limit=candidate_scan_limit,
+        )
+
+    @app.post("/api/review/enqueue-contradiction-batch")
+    def enqueue_contradiction_batch_review_candidates(
+        request: EnqueueContradictionBatchRequest,
+    ) -> dict[str, Any]:
+        return enqueue_contradiction_candidate_batch(
+            db,
+            label=request.label,
+            document_id=request.document_id,
+            focus_limit=request.focus_limit,
+            candidates_per_node=request.candidates_per_node,
+            include_same_document=request.include_same_document,
+            created_by=request.created_by,
+            min_similarity=request.min_similarity,
+            max_similarity=request.max_similarity,
             candidate_scan_limit=request.candidate_scan_limit,
             exclude_node_keys=request.exclude_node_keys,
             dry_run=request.dry_run,

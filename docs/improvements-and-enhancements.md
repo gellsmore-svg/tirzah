@@ -206,8 +206,14 @@ before/after rank and score. Default remains diagnostics-only.
 - Same review/accept/reject workflow as other semantic edges, with explicit "contradicts" relation_type.
 - Include both nodes' dates and provenance in the candidate record for easy human judgment.
 
-**Priority:** Medium
-**Related:** `src/tirzah/db/repositories.py` semantic edge code, `graph_edges`, `semantic_edge_candidates`, ADR table.
+**Priority:** Medium — **implemented.** Conservative `contradicts` candidates
+(`candidate_source: contradiction_signals`) reuse the semantic-edge review
+queue. Generation requires embedding similarity in `[0.82, 0.97)` plus at least
+two of: shared semantic labels, origin-date delta ≥ 1 day, and conflict-lexicon
+hits. Near-duplicates are skipped. Candidate records and accepted edges carry
+both nodes' origin dates and compact provenance. Remaining: LLM confirmation of
+conflict claims and visualization of accepted `contradicts` neighborhoods.
+**Related:** `src/tirzah/retrieval/contradictions.py`, `src/tirzah/db/repositories.py` semantic edge code, `graph_edges`, `semantic_edge_candidates`, ADR table / DQ-005.
 
 ### 3.3 Lightweight Graph Visualization and Exploration
 **Description:** Add a simple (text or SVG) graph neighborhood viewer in the web UI developer mode and a richer `graph-explore` CLI command that renders one-hop and two-hop neighborhoods with relation types and provenance.

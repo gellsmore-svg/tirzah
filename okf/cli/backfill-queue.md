@@ -23,5 +23,7 @@ resumable (see the [ingestion module](../modules/ingestion.md)):
 - **Semantic candidate batches** — `enqueue-semantic-candidates` /
   `enqueue-vector-semantic-candidates` / `enqueue-profile-semantic-candidates`
   (+ the `-batch` forms) to generate edge candidates at scale.
+  `enqueue-contradiction-candidates` / `enqueue-contradiction-batch` queue
+  conservative `contradicts` candidates the same way.
 - **Health** — `queue-status`, `memory-health`, and `embedding-smoke` (verify an
   [embedding adapter](../modules/adapters.md) produces a vector).

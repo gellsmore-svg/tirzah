@@ -35,6 +35,6 @@ Last updated: 2026-05-17
 | DQ-002 | Exact structured context document schema. | Use hybrid JSON with summaries, chunks, provenance, relationships, and sufficiency flags as in design Section 7.8. |
 | DQ-003 | Traversal scoring signal reliability. | Track mechanically from compiled context document and exchanges; validate in Stage 3. |
 | DQ-004 | Low-confidence edge threshold. | Default 5.0, configurable. |
-| DQ-005 | Contradictions as first-class edges. | Add `contradicts` relation type early, even if advanced conflict handling is later. |
+| DQ-005 | Contradictions as first-class edges. | `contradicts` is a first-class reviewed relation. Conservative candidates are queued with dates/provenance; advanced conflict handling (LLM confirmation, resolution) remains later. |
 | DQ-006 | Model role allocation. | Current hardware is 8GB RAM plus GTX 3060; prefer lightweight/local role choices until upgraded. |
 | DQ-007 | Whether MongoDB local supports vector search in target environment. | Confirm before depending on `$vectorSearch`; fallback may be local FAISS/Chroma or brute embedding scan for prototype. |

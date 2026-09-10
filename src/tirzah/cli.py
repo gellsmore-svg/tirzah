@@ -38,6 +38,8 @@ from tirzah.db.repositories import (
     backfill_structural_graph_edges,
     commit_ingestion,
     create_reviewed_semantic_edge,
+    enqueue_contradiction_candidate_batch,
+    enqueue_contradiction_candidates,
     enqueue_semantic_edge_candidates,
     enqueue_vector_semantic_edge_candidate_batch,
     enqueue_vector_semantic_edge_candidates,
@@ -85,6 +87,7 @@ from tirzah.retrieval.queries import (
     embedding_candidate_report,
     semantic_candidate_nodes,
 )
+from tirzah.retrieval.contradictions import contradiction_candidate_report
 from tirzah.retrieval.trust import trust_temporal_diagnostic_for_node
 from tirzah.sessions.active_documents import list_active_documents
 from tirzah.sessions.continuity import (
@@ -379,14 +382,35 @@ def render_semantic_edge_candidates_text(candidates: list[dict]) -> str:
             f"{candidate.get('target_title') or candidate.get('target_node_id')}"
         )
         lines.append(f"   id: {candidate.get('candidate_id')}")
-        evidence = (
-            f"profile similarity {candidate.get('embedding_similarity')}"
-            if candidate.get("candidate_source") == "embedding_similarity"
-            else f"labels {', '.join(candidate.get('shared_labels') or [])}"
-        )
+        if candidate.get("candidate_source") == "contradiction_signals":
+            signals = candidate.get("contradiction_signals") or {}
+            evidence = (
+                f"contradicts cues {signals.get('cue_count', 0)}; "
+                f"profile similarity {candidate.get('embedding_similarity')}"
+            )
+        elif candidate.get("candidate_source") == "embedding_similarity":
+            evidence = f"profile similarity {candidate.get('embedding_similarity')}"
+        else:
+            evidence = f"labels {', '.join(candidate.get('shared_labels') or [])}"
         lines.append(
             f"   source: {candidate.get('candidate_source') or 'label_overlap'} | {evidence}"
         )
+        if candidate.get("source_origin_date") or candidate.get("target_origin_date"):
+            delta = candidate.get("origin_date_delta_days")
+            delta_text = f" (delta {delta}d)" if delta is not None else ""
+            lines.append(
+                "   origin dates: "
+                f"{candidate.get('source_origin_date') or 'unknown'} -> "
+                f"{candidate.get('target_origin_date') or 'unknown'}{delta_text}"
+            )
+        source_provenance = candidate.get("source_provenance") or {}
+        target_provenance = candidate.get("target_provenance") or {}
+        if source_provenance.get("source_path") or target_provenance.get("source_path"):
+            lines.append(
+                "   provenance: "
+                f"{source_provenance.get('source_path') or 'unknown'} | "
+                f"{target_provenance.get('source_path') or 'unknown'}"
+            )
         shared_wording = candidate.get("shared_wording") or {}
         if shared_wording:
             lines.append(
@@ -631,6 +655,156 @@ def add_enqueue_profile_batch_arguments(command: argparse.ArgumentParser) -> Non
     command.add_argument("--exclude-node-key", action="append", default=[])
     command.add_argument("--dry-run", action="store_true")
     command.add_argument("--format", choices=["json", "text"], default="json")
+
+
+def add_contradiction_candidate_arguments(command: argparse.ArgumentParser) -> None:
+    command.add_argument("node_id")
+    command.add_argument("--include-same-document", action="store_true")
+    command.add_argument("--min-similarity", type=float, default=0.82)
+    command.add_argument("--max-similarity", type=float, default=0.97)
+    command.add_argument("--limit", type=int, default=10)
+    command.add_argument("--candidate-scan-limit", type=int, default=None)
+    command.add_argument("--format", choices=["json", "text"], default="json")
+
+
+def add_enqueue_contradiction_candidate_arguments(command: argparse.ArgumentParser) -> None:
+    command.add_argument("node_id")
+    command.add_argument("--include-same-document", action="store_true")
+    command.add_argument("--created-by", default="user")
+    command.add_argument("--min-similarity", type=float, default=0.82)
+    command.add_argument("--max-similarity", type=float, default=0.97)
+    command.add_argument("--limit", type=int, default=10)
+    command.add_argument("--candidate-scan-limit", type=int, default=None)
+
+
+def add_enqueue_contradiction_batch_arguments(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--label", default=None)
+    command.add_argument("--document-id", default=None)
+    command.add_argument("--focus-limit", type=int, default=25)
+    command.add_argument("--candidates-per-node", type=int, default=2)
+    command.add_argument("--include-same-document", action="store_true")
+    command.add_argument("--created-by", default="user")
+    command.add_argument("--min-similarity", type=float, default=0.82)
+    command.add_argument("--max-similarity", type=float, default=0.97)
+    command.add_argument("--candidate-scan-limit", type=int, default=None)
+    command.add_argument("--exclude-node-key", action="append", default=[])
+    command.add_argument("--dry-run", action="store_true")
+    command.add_argument("--format", choices=["json", "text"], default="json")
+
+
+def render_contradiction_candidates_text(report: dict) -> str:
+    diagnostics = report.get("diagnostics") or {}
+    exclusions = diagnostics.get("exclusions") or {}
+    lines = [
+        f"Contradiction candidate preview: {'ready' if report.get('ok') else 'needs attention'}",
+    ]
+    if report.get("reason"):
+        lines.append(f"reason: {report['reason']}")
+    lines.extend(
+        [
+            (
+                f"band: {diagnostics.get('min_similarity')} <= similarity < "
+                f"{diagnostics.get('max_similarity')} | min cues {diagnostics.get('min_cues')}"
+            ),
+            (
+                f"considered: {diagnostics.get('considered_count', 0)} embedding neighbors | "
+                f"returned {diagnostics.get('returned_count', 0)}"
+            ),
+            (
+                "excluded: "
+                f"{exclusions.get('above_max_similarity', 0)} near-duplicate similarity, "
+                f"{exclusions.get('insufficient_cues', 0)} below cue bar, "
+                f"{exclusions.get('missing_target', 0)} missing target"
+            ),
+        ]
+    )
+    for index, node in enumerate(report.get("nodes") or [], start=1):
+        signals = node.get("contradiction_signals") or {}
+        lines.append("")
+        lines.append(
+            f"{index}. {node.get('title') or node.get('node_id')} | "
+            f"profile similarity {node.get('embedding_similarity')} | "
+            f"cues {signals.get('cue_count', 0)}"
+        )
+        if node.get("source_origin_date") or node.get("target_origin_date"):
+            delta = node.get("origin_date_delta_days")
+            delta_text = f" (delta {delta}d)" if delta is not None else ""
+            lines.append(
+                "   origin dates: "
+                f"{node.get('source_origin_date') or 'unknown'} -> "
+                f"{node.get('target_origin_date') or 'unknown'}{delta_text}"
+            )
+        source_provenance = node.get("source_provenance") or {}
+        target_provenance = node.get("target_provenance") or {}
+        if source_provenance.get("source_path") or target_provenance.get("source_path"):
+            lines.append(
+                "   provenance: "
+                f"{source_provenance.get('source_path') or 'unknown'} | "
+                f"{target_provenance.get('source_path') or 'unknown'}"
+            )
+        if signals.get("conflict_terms"):
+            lines.append(f"   conflict terms: {', '.join(signals.get('conflict_terms') or [])}")
+        if node.get("text_preview"):
+            lines.append(f"   text: {node['text_preview']}")
+    return "\n".join(lines)
+
+
+def render_contradiction_batch_text(result: dict) -> str:
+    scope = result.get("scope") or {}
+    lines = [
+        f"Contradiction candidate batch: {'ready' if result.get('ok') else 'needs attention'}",
+        f"mode: {'dry run' if scope.get('dry_run') else 'queue pending review rows'}",
+        f"scope: label {scope.get('label') or 'any'}, document {scope.get('document_id') or 'any'}",
+        (
+            f"focus nodes: {scope.get('focus_node_count', 0)} of limit {scope.get('focus_limit')} | "
+            f"per focus: {scope.get('candidates_per_node')} | "
+            f"band {scope.get('min_similarity')}-{scope.get('max_similarity')}"
+        ),
+        (
+            f"candidates found: {result.get('candidate_count', 0)} | "
+            f"would queue: {result.get('would_enqueue_count', 0)} | "
+            f"queued: {result.get('enqueued_count', 0)} | "
+            f"existing: {result.get('skipped_existing_count', 0)} | "
+            f"invalid: {result.get('skipped_invalid_count', 0)}"
+        ),
+    ]
+    if result.get("reason"):
+        lines.append(f"reason: {result['reason']}")
+    shown = 0
+    for focus in result.get("focus_results") or []:
+        previews = focus.get("candidate_previews") or []
+        if not previews:
+            continue
+        lines.append("")
+        lines.append(
+            f"- {focus.get('title') or focus.get('node_id')} | "
+            f"would queue {focus.get('would_enqueue_count', 0)} | "
+            f"existing {focus.get('skipped_existing_count', 0)}"
+        )
+        for candidate in previews[:3]:
+            signals = candidate.get("contradiction_signals") or {}
+            lines.append(
+                f"  -> {candidate.get('target_title') or candidate.get('target_node_id')} | "
+                f"profile similarity {candidate.get('embedding_similarity')} | "
+                f"cues {signals.get('cue_count', 0)} | "
+                f"{candidate.get('review_hint') or ''}".rstrip()
+            )
+            if candidate.get("source_origin_date") or candidate.get("target_origin_date"):
+                delta = candidate.get("origin_date_delta_days")
+                delta_text = f" (delta {delta}d)" if delta is not None else ""
+                lines.append(
+                    "     origin dates: "
+                    f"{candidate.get('source_origin_date') or 'unknown'} -> "
+                    f"{candidate.get('target_origin_date') or 'unknown'}{delta_text}"
+                )
+            if candidate.get("source_text_preview"):
+                lines.append(f"     source text: {candidate['source_text_preview']}")
+            if candidate.get("target_text_preview"):
+                lines.append(f"     target text: {candidate['target_text_preview']}")
+        shown += 1
+        if shown >= 8:
+            break
+    return "\n".join(lines)
 
 
 def init_config_payload(
@@ -1091,8 +1265,30 @@ def main() -> None:
     )
     add_enqueue_profile_batch_arguments(enqueue_profile_semantic_batch)
 
+    contradiction_candidates = _add_cmd(
+        subcommands,
+        "contradiction-candidates",
+        help="preview conservative contradicts candidates for a node",
+    )
+    add_contradiction_candidate_arguments(contradiction_candidates)
+
+    enqueue_contradiction = _add_cmd(
+        subcommands,
+        "enqueue-contradiction-candidates",
+        help="queue conservative contradicts candidates for review",
+    )
+    add_enqueue_contradiction_candidate_arguments(enqueue_contradiction)
+
+    enqueue_contradiction_batch = _add_cmd(
+        subcommands,
+        "enqueue-contradiction-batch",
+        help="queue conservative contradicts candidates across a node scope",
+    )
+    add_enqueue_contradiction_batch_arguments(enqueue_contradiction_batch)
+
     semantic_queue = _add_cmd(subcommands, "semantic-edge-candidates")
     semantic_queue.add_argument("--status", default="pending")
+    semantic_queue.add_argument("--relation-type", default=None)
     semantic_queue.add_argument("--limit", type=int, default=20)
     semantic_queue.add_argument("--format", choices=["json", "text"], default="json")
 
@@ -2144,11 +2340,70 @@ def main() -> None:
             print(json.dumps(result, indent=2))
         return
 
+    if args.command == "contradiction-candidates":
+        ensure_indexes(db)
+        report = contradiction_candidate_report(
+            db,
+            args.node_id,
+            include_same_document=args.include_same_document,
+            min_similarity=args.min_similarity,
+            max_similarity=args.max_similarity,
+            limit=args.limit,
+            candidate_scan_limit=args.candidate_scan_limit,
+        )
+        if args.format == "text":
+            print(render_contradiction_candidates_text(report))
+        else:
+            print(json.dumps(report, indent=2))
+        return
+
+    if args.command == "enqueue-contradiction-candidates":
+        ensure_indexes(db)
+        print(
+            json.dumps(
+                enqueue_contradiction_candidates(
+                    db,
+                    node_id=args.node_id,
+                    include_same_document=args.include_same_document,
+                    created_by=args.created_by,
+                    min_similarity=args.min_similarity,
+                    max_similarity=args.max_similarity,
+                    limit=args.limit,
+                    candidate_scan_limit=args.candidate_scan_limit,
+                ),
+                indent=2,
+            )
+        )
+        return
+
+    if args.command == "enqueue-contradiction-batch":
+        ensure_indexes(db)
+        result = enqueue_contradiction_candidate_batch(
+            db,
+            label=args.label,
+            document_id=args.document_id,
+            focus_limit=args.focus_limit,
+            candidates_per_node=args.candidates_per_node,
+            include_same_document=args.include_same_document,
+            created_by=args.created_by,
+            min_similarity=args.min_similarity,
+            max_similarity=args.max_similarity,
+            candidate_scan_limit=args.candidate_scan_limit,
+            exclude_node_keys=args.exclude_node_key,
+            dry_run=args.dry_run,
+        )
+        if args.format == "text":
+            print(render_contradiction_batch_text(result))
+        else:
+            print(json.dumps(result, indent=2))
+        return
+
     if args.command == "semantic-edge-candidates":
         ensure_indexes(db)
         candidates = list_semantic_edge_candidates(
             db,
             status=args.status,
+            relation_type=args.relation_type,
             limit=args.limit,
         )
         if args.format == "text":

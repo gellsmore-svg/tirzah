@@ -2142,11 +2142,243 @@ def test_cli_enqueue_vector_semantic_batch_text_format(monkeypatch, capsys) -> N
     assert "target text: Target preview." in output
 
 
+def test_cli_contradiction_candidates_command(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tirzah",
+            "contradiction-candidates",
+            "node1",
+            "--include-same-document",
+            "--min-similarity",
+            "0.84",
+            "--max-similarity",
+            "0.96",
+            "--limit",
+            "3",
+            "--candidate-scan-limit",
+            "400",
+        ],
+    )
+    monkeypatch.setattr(
+        "tirzah.cli.load_config",
+        lambda _path: SimpleNamespace(mongo=SimpleNamespace()),
+    )
+    monkeypatch.setattr("tirzah.cli.get_database", lambda _config: "db")
+    monkeypatch.setattr("tirzah.cli.ensure_indexes", lambda _db: None)
+    monkeypatch.setattr(
+        "tirzah.cli.contradiction_candidate_report",
+        lambda _db, node_id, **kwargs: {"ok": True, "node_id": node_id, **kwargs},
+    )
+
+    main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output == {
+        "ok": True,
+        "node_id": "node1",
+        "include_same_document": True,
+        "min_similarity": 0.84,
+        "max_similarity": 0.96,
+        "limit": 3,
+        "candidate_scan_limit": 400,
+    }
+
+
+def test_cli_enqueue_contradiction_candidates_command(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tirzah",
+            "enqueue-contradiction-candidates",
+            "node1",
+            "--include-same-document",
+            "--created-by",
+            "cello",
+            "--min-similarity",
+            "0.84",
+            "--max-similarity",
+            "0.96",
+            "--limit",
+            "3",
+            "--candidate-scan-limit",
+            "400",
+        ],
+    )
+    monkeypatch.setattr(
+        "tirzah.cli.load_config",
+        lambda _path: SimpleNamespace(mongo=SimpleNamespace()),
+    )
+    monkeypatch.setattr("tirzah.cli.get_database", lambda _config: "db")
+    monkeypatch.setattr("tirzah.cli.ensure_indexes", lambda _db: None)
+    monkeypatch.setattr(
+        "tirzah.cli.enqueue_contradiction_candidates",
+        lambda _db, **kwargs: {"ok": True, **kwargs},
+    )
+
+    main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output == {
+        "ok": True,
+        "node_id": "node1",
+        "include_same_document": True,
+        "created_by": "cello",
+        "min_similarity": 0.84,
+        "max_similarity": 0.96,
+        "limit": 3,
+        "candidate_scan_limit": 400,
+    }
+
+
+def test_cli_enqueue_contradiction_batch_command(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tirzah",
+            "enqueue-contradiction-batch",
+            "--label",
+            "ams_domain",
+            "--document-id",
+            "doc1",
+            "--focus-limit",
+            "12",
+            "--candidates-per-node",
+            "2",
+            "--include-same-document",
+            "--created-by",
+            "cello",
+            "--min-similarity",
+            "0.84",
+            "--max-similarity",
+            "0.96",
+            "--candidate-scan-limit",
+            "400",
+            "--exclude-node-key",
+            "section-1",
+            "--dry-run",
+        ],
+    )
+    monkeypatch.setattr(
+        "tirzah.cli.load_config",
+        lambda _path: SimpleNamespace(mongo=SimpleNamespace()),
+    )
+    monkeypatch.setattr("tirzah.cli.get_database", lambda _config: "db")
+    monkeypatch.setattr("tirzah.cli.ensure_indexes", lambda _db: None)
+    monkeypatch.setattr(
+        "tirzah.cli.enqueue_contradiction_candidate_batch",
+        lambda _db, **kwargs: {"ok": True, **kwargs},
+    )
+
+    main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output == {
+        "ok": True,
+        "label": "ams_domain",
+        "document_id": "doc1",
+        "focus_limit": 12,
+        "candidates_per_node": 2,
+        "include_same_document": True,
+        "created_by": "cello",
+        "min_similarity": 0.84,
+        "max_similarity": 0.96,
+        "candidate_scan_limit": 400,
+        "exclude_node_keys": ["section-1"],
+        "dry_run": True,
+    }
+
+
+def test_cli_enqueue_contradiction_batch_text_format(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tirzah",
+            "enqueue-contradiction-batch",
+            "--label",
+            "ams_domain",
+            "--dry-run",
+            "--format",
+            "text",
+        ],
+    )
+    monkeypatch.setattr(
+        "tirzah.cli.load_config",
+        lambda _path: SimpleNamespace(mongo=SimpleNamespace()),
+    )
+    monkeypatch.setattr("tirzah.cli.get_database", lambda _config: "db")
+    monkeypatch.setattr("tirzah.cli.ensure_indexes", lambda _db: None)
+    monkeypatch.setattr(
+        "tirzah.cli.enqueue_contradiction_candidate_batch",
+        lambda _db, **_kwargs: {
+            "ok": True,
+            "candidate_count": 1,
+            "would_enqueue_count": 1,
+            "enqueued_count": 0,
+            "skipped_existing_count": 0,
+            "skipped_invalid_count": 0,
+            "scope": {
+                "label": "ams_domain",
+                "document_id": None,
+                "focus_limit": 25,
+                "focus_node_count": 1,
+                "candidates_per_node": 2,
+                "min_similarity": 0.82,
+                "max_similarity": 0.97,
+                "dry_run": True,
+            },
+            "focus_results": [
+                {
+                    "node_id": "source1",
+                    "title": "Source",
+                    "would_enqueue_count": 1,
+                    "skipped_existing_count": 0,
+                    "candidate_previews": [
+                        {
+                            "target_node_id": "target1",
+                            "target_title": "Target",
+                            "embedding_similarity": 0.9,
+                            "contradiction_signals": {"cue_count": 2},
+                            "review_hint": "Review hint: possible contradiction (shared labels, date delta).",
+                            "source_origin_date": "2020-01-01",
+                            "target_origin_date": "2024-06-01",
+                            "origin_date_delta_days": 1613,
+                            "source_text_preview": "Source preview.",
+                            "target_text_preview": "Target preview.",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    main()
+
+    output = capsys.readouterr().out
+    assert "Contradiction candidate batch: ready" in output
+    assert "mode: dry run" in output
+    assert "origin dates: 2020-01-01 -> 2024-06-01 (delta 1613d)" in output
+    assert "possible contradiction" in output
+
+
 def test_cli_semantic_edge_candidates_command(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
-        ["tirzah", "semantic-edge-candidates", "--status", "pending", "--limit", "4"],
+        [
+            "tirzah",
+            "semantic-edge-candidates",
+            "--status",
+            "pending",
+            "--relation-type",
+            "contradicts",
+            "--limit",
+            "4",
+        ],
     )
     monkeypatch.setattr(
         "tirzah.cli.load_config",
@@ -2156,7 +2388,9 @@ def test_cli_semantic_edge_candidates_command(monkeypatch, capsys) -> None:
     monkeypatch.setattr("tirzah.cli.ensure_indexes", lambda _db: None)
     monkeypatch.setattr(
         "tirzah.cli.list_semantic_edge_candidates",
-        lambda _db, status="pending", limit=20: [{"status": status, "limit": limit}],
+        lambda _db, status="pending", limit=20, relation_type=None: [
+            {"status": status, "limit": limit, "relation_type": relation_type}
+        ],
     )
 
     main()
@@ -2164,7 +2398,7 @@ def test_cli_semantic_edge_candidates_command(monkeypatch, capsys) -> None:
     output = json.loads(capsys.readouterr().out)
     assert output == {
         "ok": True,
-        "candidates": [{"status": "pending", "limit": 4}],
+        "candidates": [{"status": "pending", "limit": 4, "relation_type": "contradicts"}],
     }
 
 
@@ -2191,7 +2425,7 @@ def test_cli_semantic_edge_candidates_text_format(monkeypatch, capsys) -> None:
     monkeypatch.setattr("tirzah.cli.ensure_indexes", lambda _db: None)
     monkeypatch.setattr(
         "tirzah.cli.list_semantic_edge_candidates",
-        lambda _db, status="pending", limit=20: [
+        lambda _db, status="pending", limit=20, relation_type=None: [
             {
                 "candidate_id": "candidate1",
                 "relation_type": "related_to",

@@ -1965,8 +1965,13 @@ def test_semantic_edge_candidates_endpoint(monkeypatch) -> None:
 
     monkeypatch.setattr(
         "tirzah.web.app.list_semantic_edge_candidates",
-        lambda _db, status="pending", limit=20: [
-            {"candidate_id": "candidate1", "status": status, "limit": limit}
+        lambda _db, status="pending", limit=20, relation_type=None: [
+            {
+                "candidate_id": "candidate1",
+                "status": status,
+                "limit": limit,
+                "relation_type": relation_type,
+            }
         ],
     )
 
@@ -1978,7 +1983,14 @@ def test_semantic_edge_candidates_endpoint(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json() == {
         "ok": True,
-        "candidates": [{"candidate_id": "candidate1", "status": "pending", "limit": 2}],
+        "candidates": [
+            {
+                "candidate_id": "candidate1",
+                "status": "pending",
+                "limit": 2,
+                "relation_type": None,
+            }
+        ],
     }
 
 
@@ -2207,6 +2219,114 @@ def test_enqueue_vector_semantic_batch_endpoint(monkeypatch) -> None:
         "created_by": "tester",
         "min_similarity": 0.82,
         "candidate_scan_limit": 500,
+        "exclude_node_keys": ["section-1"],
+        "dry_run": True,
+    }
+
+
+def test_enqueue_contradiction_candidates_endpoint(monkeypatch) -> None:
+    client = TestClient(app)
+
+    monkeypatch.setattr(
+        "tirzah.web.app.enqueue_contradiction_candidates",
+        lambda _db, **kwargs: {"ok": True, "source": "contradiction", **kwargs},
+    )
+
+    response = client.post(
+        "/api/review/enqueue-semantic-edge-candidates",
+        json={
+            "node_id": "node1",
+            "candidate_source": "contradiction_signals",
+            "include_same_document": True,
+            "created_by": "tester",
+            "min_similarity": 0.84,
+            "max_similarity": 0.96,
+            "limit": 3,
+            "candidate_scan_limit": 400,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "source": "contradiction",
+        "node_id": "node1",
+        "limit": 3,
+        "include_same_document": True,
+        "created_by": "tester",
+        "min_similarity": 0.84,
+        "max_similarity": 0.96,
+        "candidate_scan_limit": 400,
+    }
+
+
+def test_contradiction_candidates_preview_endpoint(monkeypatch) -> None:
+    client = TestClient(app)
+
+    monkeypatch.setattr(
+        "tirzah.web.app.contradiction_candidate_report",
+        lambda _db, **kwargs: {
+            "ok": True,
+            "nodes": [{"node_id": kwargs["node_id"], "title": "Target"}],
+            "diagnostics": {"returned_count": 1, **kwargs},
+        },
+    )
+
+    response = client.get(
+        "/api/review/contradiction-candidates",
+        params={
+            "node_id": "node1",
+            "include_same_document": True,
+            "min_similarity": 0.84,
+            "max_similarity": 0.96,
+            "limit": 3,
+            "candidate_scan_limit": 400,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["diagnostics"]["min_similarity"] == 0.84
+    assert response.json()["diagnostics"]["max_similarity"] == 0.96
+    assert response.json()["nodes"][0]["title"] == "Target"
+
+
+def test_enqueue_contradiction_batch_endpoint(monkeypatch) -> None:
+    client = TestClient(app)
+
+    monkeypatch.setattr(
+        "tirzah.web.app.enqueue_contradiction_candidate_batch",
+        lambda _db, **kwargs: {"ok": True, **kwargs},
+    )
+
+    response = client.post(
+        "/api/review/enqueue-contradiction-batch",
+        json={
+            "label": "source_section",
+            "document_id": "doc1",
+            "focus_limit": 5,
+            "candidates_per_node": 1,
+            "include_same_document": True,
+            "created_by": "tester",
+            "min_similarity": 0.84,
+            "max_similarity": 0.96,
+            "candidate_scan_limit": 400,
+            "exclude_node_keys": ["section-1"],
+            "dry_run": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "label": "source_section",
+        "document_id": "doc1",
+        "focus_limit": 5,
+        "candidates_per_node": 1,
+        "include_same_document": True,
+        "created_by": "tester",
+        "min_similarity": 0.84,
+        "max_similarity": 0.96,
+        "candidate_scan_limit": 400,
         "exclude_node_keys": ["section-1"],
         "dry_run": True,
     }

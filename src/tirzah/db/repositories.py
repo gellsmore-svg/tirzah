@@ -32,7 +32,7 @@ from tirzah.models.ingestion import (
 
 STRUCTURAL_LABELS = {"source_root", "source_section", "source_chunk"}
 DEFAULT_INGESTION_EPOCH_SUFFIX = "default"
-SYMMETRIC_SEMANTIC_RELATION_TYPES = {"related_to"}
+SYMMETRIC_SEMANTIC_RELATION_TYPES = {"related_to", "contradicts"}
 
 
 class DuplicateSourceError(Exception):
@@ -1029,6 +1029,16 @@ def create_reviewed_semantic_edge(
             provenance["embedding_model"] = candidate_context.get("embedding_model")
         if candidate_context.get("embedding_dimensions"):
             provenance["embedding_dimensions"] = candidate_context.get("embedding_dimensions")
+        if candidate_context.get("contradiction_signals"):
+            provenance["contradiction_signals"] = candidate_context.get("contradiction_signals")
+        if candidate_context.get("source_origin_date") or candidate_context.get("target_origin_date"):
+            provenance["source_origin_date"] = candidate_context.get("source_origin_date")
+            provenance["target_origin_date"] = candidate_context.get("target_origin_date")
+            provenance["origin_date_delta_days"] = candidate_context.get("origin_date_delta_days")
+        if candidate_context.get("source_provenance"):
+            provenance["source_provenance"] = candidate_context.get("source_provenance")
+        if candidate_context.get("target_provenance"):
+            provenance["target_provenance"] = candidate_context.get("target_provenance")
     edge_doc = {
         "schema_version": SCHEMA_VERSION,
         "document_id": source.get("document_id"),
@@ -1358,6 +1368,385 @@ def enqueue_vector_semantic_edge_candidate_batch(
     }
 
 
+def enqueue_contradiction_candidates(
+    db: Database,
+    node_id: str,
+    limit: int = 10,
+    include_same_document: bool = False,
+    created_by: str = "user",
+    min_similarity: float = 0.82,
+    max_similarity: float = 0.97,
+    candidate_scan_limit: int | None = None,
+) -> dict[str, Any]:
+    if not collection_available(db, "semantic_edge_candidates"):
+        return {"ok": False, "reason": "semantic_edge_candidates_unavailable"}
+    source_id = parse_object_id(node_id)
+    if source_id is None:
+        return {"ok": False, "reason": "invalid_source_node_id", "source_node_id": node_id}
+    source = db.nodes.find_one({"_id": source_id})
+    if not source:
+        return {"ok": False, "reason": "source_node_not_found", "source_node_id": node_id}
+
+    from tirzah.retrieval.contradictions import (
+        CONTRADICTION_CANDIDATE_SOURCE,
+        CONTRADICTION_RELATION_TYPE,
+        DEFAULT_CONTRADICTION_MAX_SIMILARITY,
+        DEFAULT_CONTRADICTION_MIN_SIMILARITY,
+        MIN_CONTRADICTION_CUES,
+        contradiction_candidate_nodes,
+    )
+
+    min_threshold = bounded_similarity_threshold(
+        min_similarity, default=DEFAULT_CONTRADICTION_MIN_SIMILARITY
+    )
+    max_threshold = bounded_similarity_threshold(
+        max_similarity, default=DEFAULT_CONTRADICTION_MAX_SIMILARITY
+    )
+    if max_threshold < min_threshold:
+        max_threshold = min_threshold
+    relation = CONTRADICTION_RELATION_TYPE
+    candidates = contradiction_candidate_nodes(
+        db,
+        node_id=node_id,
+        limit=bounded_candidate_limit(limit),
+        include_same_document=include_same_document,
+        min_similarity=min_threshold,
+        max_similarity=max_threshold,
+        candidate_scan_limit=candidate_scan_limit,
+    )
+    now = datetime.now(timezone.utc)
+    inserted = []
+    skipped_existing = 0
+    skipped_invalid = 0
+    for candidate in candidates:
+        target_id = parse_object_id(candidate.get("node_id"))
+        if target_id is None:
+            skipped_invalid += 1
+            continue
+        if semantic_edge_candidate_exists(db, source_id, target_id, relation):
+            skipped_existing += 1
+            continue
+        inserted.append(
+            contradiction_candidate_document(
+                source=source,
+                candidate=candidate,
+                source_id=source_id,
+                target_id=target_id,
+                relation=relation,
+                created_by=created_by,
+                now=now,
+                min_similarity=min_threshold,
+                max_similarity=max_threshold,
+                include_same_document=include_same_document,
+                requested_limit=bounded_candidate_limit(limit),
+            )
+        )
+    if inserted:
+        db.semantic_edge_candidates.insert_many(inserted)
+    return {
+        "ok": True,
+        "source_node_id": str(source_id),
+        "candidate_source": CONTRADICTION_CANDIDATE_SOURCE,
+        "relation_type": relation,
+        "min_similarity": min_threshold,
+        "max_similarity": max_threshold,
+        "min_cues": MIN_CONTRADICTION_CUES,
+        "candidate_count": len(candidates),
+        "enqueued_count": len(inserted),
+        "skipped_existing_count": skipped_existing,
+        "skipped_invalid_count": skipped_invalid,
+    }
+
+
+def enqueue_contradiction_candidate_batch(
+    db: Database,
+    label: str | None = None,
+    document_id: str | None = None,
+    focus_limit: int = 25,
+    candidates_per_node: int = 2,
+    include_same_document: bool = False,
+    created_by: str = "user",
+    min_similarity: float = 0.82,
+    max_similarity: float = 0.97,
+    candidate_scan_limit: int | None = None,
+    exclude_node_keys: list[str] | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    if not collection_available(db, "semantic_edge_candidates"):
+        return {"ok": False, "reason": "semantic_edge_candidates_unavailable"}
+
+    from tirzah.retrieval.contradictions import (
+        CONTRADICTION_CANDIDATE_SOURCE,
+        CONTRADICTION_RELATION_TYPE,
+        DEFAULT_CONTRADICTION_MAX_SIMILARITY,
+        DEFAULT_CONTRADICTION_MIN_SIMILARITY,
+        MIN_CONTRADICTION_CUES,
+    )
+
+    relation = CONTRADICTION_RELATION_TYPE
+    filters: dict[str, Any] = {
+        "embedding.model": {"$exists": True},
+        "embedding.dimensions": {"$exists": True},
+    }
+    if label:
+        filters["labels"] = label
+    if document_id:
+        parsed_document_id = parse_object_id(document_id)
+        if parsed_document_id is None:
+            return {"ok": False, "reason": "invalid_document_id", "document_id": document_id}
+        filters["document_id"] = parsed_document_id
+
+    min_threshold = bounded_similarity_threshold(
+        min_similarity, default=DEFAULT_CONTRADICTION_MIN_SIMILARITY
+    )
+    max_threshold = bounded_similarity_threshold(
+        max_similarity, default=DEFAULT_CONTRADICTION_MAX_SIMILARITY
+    )
+    if max_threshold < min_threshold:
+        max_threshold = min_threshold
+    bounded_focus_limit = max(1, min(int(focus_limit or 25), 200))
+    bounded_candidates_per_node = bounded_candidate_limit(candidates_per_node)
+    excluded_node_keys = {str(key) for key in (exclude_node_keys or []) if str(key)}
+    focus_nodes = []
+    for node in db.nodes.find(filters).limit(bounded_focus_limit):
+        if "source_root" in (node.get("labels") or []):
+            continue
+        if node.get("status") == "superseded":
+            continue
+        if str(node.get("node_key") or "") in excluded_node_keys:
+            continue
+        focus_nodes.append(node)
+
+    totals = {
+        "candidate_count": 0,
+        "enqueued_count": 0,
+        "would_enqueue_count": 0,
+        "skipped_existing_count": 0,
+        "skipped_invalid_count": 0,
+    }
+    focus_results = []
+    dry_run_pair_keys: set[str] = set()
+    for node in focus_nodes:
+        if dry_run:
+            result = contradiction_candidate_batch_dry_run_result(
+                db,
+                node=node,
+                limit=bounded_candidates_per_node,
+                include_same_document=include_same_document,
+                min_similarity=min_threshold,
+                max_similarity=max_threshold,
+                candidate_scan_limit=candidate_scan_limit,
+                batch_pair_keys=dry_run_pair_keys,
+            )
+            for key in totals:
+                totals[key] += int(result.get(key) or 0)
+            focus_results.append(result)
+            continue
+        result = enqueue_contradiction_candidates(
+            db,
+            node_id=str(node.get("_id")),
+            limit=bounded_candidates_per_node,
+            include_same_document=include_same_document,
+            created_by=created_by,
+            min_similarity=min_threshold,
+            max_similarity=max_threshold,
+            candidate_scan_limit=candidate_scan_limit,
+        )
+        for key in totals:
+            totals[key] += int(result.get(key) or 0)
+        focus_results.append(
+            {
+                "node_id": str(node.get("_id")),
+                "title": node.get("title"),
+                "ok": result.get("ok"),
+                "candidate_count": result.get("candidate_count", 0),
+                "enqueued_count": result.get("enqueued_count", 0),
+                "skipped_existing_count": result.get("skipped_existing_count", 0),
+                "skipped_invalid_count": result.get("skipped_invalid_count", 0),
+                "reason": result.get("reason"),
+            }
+        )
+
+    return {
+        "ok": True,
+        "candidate_source": CONTRADICTION_CANDIDATE_SOURCE,
+        "relation_type": relation,
+        "scope": {
+            "label": label,
+            "document_id": document_id,
+            "focus_limit": bounded_focus_limit,
+            "focus_node_count": len(focus_nodes),
+            "candidates_per_node": bounded_candidates_per_node,
+            "include_same_document": include_same_document,
+            "relation_type": relation,
+            "created_by": created_by,
+            "min_similarity": min_threshold,
+            "max_similarity": max_threshold,
+            "min_cues": MIN_CONTRADICTION_CUES,
+            "candidate_scan_limit": candidate_scan_limit,
+            "exclude_node_keys": sorted(excluded_node_keys),
+            "dry_run": dry_run,
+        },
+        **totals,
+        "focus_results": focus_results,
+    }
+
+
+def contradiction_candidate_document(
+    *,
+    source: dict[str, Any],
+    candidate: dict[str, Any],
+    source_id: object,
+    target_id: object,
+    relation: str,
+    created_by: str,
+    now: datetime,
+    min_similarity: float,
+    max_similarity: float,
+    include_same_document: bool,
+    requested_limit: int,
+) -> dict[str, Any]:
+    from tirzah.retrieval.contradictions import (
+        CONTRADICTION_CANDIDATE_SOURCE,
+        MIN_CONTRADICTION_CUES,
+        compact_node_provenance,
+    )
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "status": "pending",
+        "candidate_source": CONTRADICTION_CANDIDATE_SOURCE,
+        "source_node_id": source_id,
+        "target_node_id": target_id,
+        "source_document_id": source.get("document_id"),
+        "target_document_id": parse_object_id(candidate.get("document_id")),
+        "source_node_key": source.get("node_key"),
+        "target_node_key": candidate.get("node_key"),
+        "relation_type": relation,
+        "pair_key": semantic_edge_candidate_pair_key(source_id, target_id, relation),
+        "shared_labels": candidate.get("shared_labels") or [],
+        "shared_label_count": candidate.get("shared_label_count") or 0,
+        "embedding_similarity": candidate.get("embedding_similarity"),
+        "embedding_model": candidate.get("embedding_model"),
+        "embedding_dimensions": candidate.get("embedding_dimensions"),
+        "selection_context": {
+            "candidate_source": CONTRADICTION_CANDIDATE_SOURCE,
+            "min_similarity": min_similarity,
+            "max_similarity": max_similarity,
+            "min_cues": MIN_CONTRADICTION_CUES,
+            "include_same_document": include_same_document,
+            "requested_limit": requested_limit,
+            "embedding_model": candidate.get("embedding_model"),
+            "embedding_dimensions": candidate.get("embedding_dimensions"),
+        },
+        "contradiction_signals": candidate.get("contradiction_signals") or {},
+        "source_origin_date": candidate.get("source_origin_date") or source.get("origin_date"),
+        "source_origin_date_source": candidate.get("source_origin_date_source")
+        or source.get("origin_date_source"),
+        "source_origin_date_confidence": candidate.get("source_origin_date_confidence")
+        or source.get("origin_date_confidence"),
+        "target_origin_date": candidate.get("target_origin_date"),
+        "target_origin_date_source": candidate.get("target_origin_date_source"),
+        "target_origin_date_confidence": candidate.get("target_origin_date_confidence"),
+        "origin_date_delta_days": candidate.get("origin_date_delta_days"),
+        "source_provenance": candidate.get("source_provenance") or compact_node_provenance(source),
+        "target_provenance": candidate.get("target_provenance") or {},
+        "source_title": source.get("title"),
+        "target_title": candidate.get("title"),
+        "created_by": created_by,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def contradiction_candidate_batch_dry_run_result(
+    db: Database,
+    node: dict[str, Any],
+    limit: int,
+    include_same_document: bool,
+    min_similarity: float,
+    max_similarity: float,
+    candidate_scan_limit: int | None,
+    batch_pair_keys: set[str] | None = None,
+) -> dict[str, Any]:
+    from tirzah.retrieval.contradictions import (
+        CONTRADICTION_RELATION_TYPE,
+        contradiction_candidate_nodes,
+    )
+    from tirzah.retrieval.queries import shared_wording_report
+
+    source_id = node.get("_id")
+    source_text = str(node.get("text") or "")
+    candidates = contradiction_candidate_nodes(
+        db,
+        node_id=str(source_id),
+        limit=limit,
+        include_same_document=include_same_document,
+        min_similarity=min_similarity,
+        max_similarity=max_similarity,
+        candidate_scan_limit=candidate_scan_limit,
+    )
+    skipped_existing = 0
+    skipped_invalid = 0
+    previews = []
+    batch_pair_keys = batch_pair_keys if batch_pair_keys is not None else set()
+    for candidate in candidates:
+        target_id = parse_object_id(candidate.get("node_id"))
+        if target_id is None:
+            skipped_invalid += 1
+            continue
+        pair_key = semantic_edge_candidate_pair_key(
+            source_id, target_id, CONTRADICTION_RELATION_TYPE
+        )
+        if pair_key in batch_pair_keys or semantic_edge_candidate_exists(
+            db, source_id, target_id, CONTRADICTION_RELATION_TYPE
+        ):
+            skipped_existing += 1
+            continue
+        batch_pair_keys.add(pair_key)
+        target_text = str(candidate.get("text_preview") or candidate.get("text") or "")
+        shared_wording = shared_wording_report(source_text, target_text)
+        previews.append(
+            {
+                "target_node_id": str(target_id),
+                "target_title": candidate.get("title"),
+                "target_node_key": candidate.get("node_key"),
+                "target_document_id": candidate.get("document_id"),
+                "source_text_preview": summarize_node_text(source_text, limit=180),
+                "target_text_preview": summarize_node_text(target_text, limit=180),
+                "shared_wording": shared_wording,
+                "review_hint": semantic_candidate_review_hint(
+                    embedding_similarity=candidate.get("embedding_similarity"),
+                    shared_wording=shared_wording,
+                    candidate_source=candidate.get("candidate_source"),
+                    contradiction_signals=candidate.get("contradiction_signals"),
+                ),
+                "embedding_similarity": candidate.get("embedding_similarity"),
+                "embedding_model": candidate.get("embedding_model"),
+                "embedding_dimensions": candidate.get("embedding_dimensions"),
+                "contradiction_signals": candidate.get("contradiction_signals") or {},
+                "source_origin_date": candidate.get("source_origin_date"),
+                "target_origin_date": candidate.get("target_origin_date"),
+                "origin_date_delta_days": candidate.get("origin_date_delta_days"),
+                "source_provenance": candidate.get("source_provenance") or {},
+                "target_provenance": candidate.get("target_provenance") or {},
+            }
+        )
+    return {
+        "node_id": str(source_id),
+        "title": node.get("title"),
+        "ok": True,
+        "dry_run": True,
+        "candidate_count": len(candidates),
+        "enqueued_count": 0,
+        "would_enqueue_count": len(previews),
+        "skipped_existing_count": skipped_existing,
+        "skipped_invalid_count": skipped_invalid,
+        "reason": None,
+        "candidate_previews": previews,
+    }
+
+
 def vector_semantic_candidate_batch_dry_run_result(
     db: Database,
     node: dict[str, Any],
@@ -1480,12 +1869,17 @@ def list_semantic_edge_candidates(
     db: Database,
     status: str | None = "pending",
     limit: int = 20,
+    relation_type: str | None = None,
 ) -> list[dict[str, Any]]:
     if not collection_available(db, "semantic_edge_candidates"):
         return []
     query = {}
     if status:
         query["status"] = status
+    if relation_type:
+        relation = normalized_relation_type(relation_type)
+        if relation:
+            query["relation_type"] = relation
     rows = db.semantic_edge_candidates.find(query).sort("created_at", -1).limit(
         bounded_candidate_limit(limit, maximum=100)
     )
@@ -1544,6 +1938,12 @@ def review_semantic_edge_candidate(
             "embedding_similarity": candidate.get("embedding_similarity"),
             "embedding_model": candidate.get("embedding_model"),
             "embedding_dimensions": candidate.get("embedding_dimensions"),
+            "contradiction_signals": candidate.get("contradiction_signals") or {},
+            "source_origin_date": candidate.get("source_origin_date"),
+            "target_origin_date": candidate.get("target_origin_date"),
+            "origin_date_delta_days": candidate.get("origin_date_delta_days"),
+            "source_provenance": candidate.get("source_provenance") or {},
+            "target_provenance": candidate.get("target_provenance") or {},
         },
     )
     if not edge_result.get("ok"):
@@ -1625,6 +2025,16 @@ def serialize_semantic_edge_candidate(row: dict[str, Any]) -> dict[str, Any]:
         "target_text_preview": row.get("target_text_preview"),
         "shared_wording": row.get("shared_wording") or {},
         "review_hint": row.get("review_hint"),
+        "source_origin_date": row.get("source_origin_date"),
+        "source_origin_date_source": row.get("source_origin_date_source"),
+        "source_origin_date_confidence": row.get("source_origin_date_confidence"),
+        "target_origin_date": row.get("target_origin_date"),
+        "target_origin_date_source": row.get("target_origin_date_source"),
+        "target_origin_date_confidence": row.get("target_origin_date_confidence"),
+        "origin_date_delta_days": row.get("origin_date_delta_days"),
+        "source_provenance": row.get("source_provenance") or {},
+        "target_provenance": row.get("target_provenance") or {},
+        "contradiction_signals": row.get("contradiction_signals") or {},
         "created_by": row.get("created_by"),
         "reviewer": row.get("reviewer"),
         "review_note": row.get("review_note"),
@@ -1640,6 +2050,7 @@ def serialize_enriched_semantic_edge_candidate(db: Database, row: dict[str, Any]
 
 
 def enrich_semantic_edge_candidate_nodes(db: Database, row: dict[str, Any]) -> dict[str, Any]:
+    from tirzah.retrieval.contradictions import compact_node_provenance, origin_date_delta_days
     from tirzah.retrieval.queries import shared_wording_report
 
     enriched = dict(row)
@@ -1651,15 +2062,40 @@ def enrich_semantic_edge_candidate_nodes(db: Database, row: dict[str, Any]) -> d
         enriched["source_title"] = enriched.get("source_title") or source.get("title")
         source_text = str(source.get("text") or "")
         enriched["source_text_preview"] = summarize_node_text(source_text, limit=280)
+        enriched["source_origin_date"] = enriched.get("source_origin_date") or source.get("origin_date")
+        enriched["source_origin_date_source"] = (
+            enriched.get("source_origin_date_source") or source.get("origin_date_source")
+        )
+        enriched["source_origin_date_confidence"] = (
+            enriched.get("source_origin_date_confidence") or source.get("origin_date_confidence")
+        )
+        if not enriched.get("source_provenance"):
+            enriched["source_provenance"] = compact_node_provenance(source)
     if target:
         enriched["target_title"] = enriched.get("target_title") or target.get("title")
         target_text = str(target.get("text") or "")
         enriched["target_text_preview"] = summarize_node_text(target_text, limit=280)
+        enriched["target_origin_date"] = enriched.get("target_origin_date") or target.get("origin_date")
+        enriched["target_origin_date_source"] = (
+            enriched.get("target_origin_date_source") or target.get("origin_date_source")
+        )
+        enriched["target_origin_date_confidence"] = (
+            enriched.get("target_origin_date_confidence") or target.get("origin_date_confidence")
+        )
+        if not enriched.get("target_provenance"):
+            enriched["target_provenance"] = compact_node_provenance(target)
+    if enriched.get("origin_date_delta_days") is None:
+        enriched["origin_date_delta_days"] = origin_date_delta_days(
+            enriched.get("source_origin_date"),
+            enriched.get("target_origin_date"),
+        )
     if source_text or target_text:
         enriched["shared_wording"] = shared_wording_report(source_text, target_text)
         enriched["review_hint"] = semantic_candidate_review_hint(
             embedding_similarity=enriched.get("embedding_similarity"),
             shared_wording=enriched["shared_wording"],
+            candidate_source=enriched.get("candidate_source"),
+            contradiction_signals=enriched.get("contradiction_signals"),
         )
     return enriched
 
@@ -1668,7 +2104,23 @@ def semantic_candidate_review_hint(
     *,
     embedding_similarity: Any,
     shared_wording: dict[str, Any] | None,
+    candidate_source: str | None = None,
+    contradiction_signals: dict[str, Any] | None = None,
 ) -> str:
+    if (candidate_source or "") == "contradiction_signals" or contradiction_signals:
+        cues = contradiction_signals or {}
+        matched = []
+        if cues.get("shared_semantic_labels"):
+            matched.append("shared labels")
+        if cues.get("origin_date_delta"):
+            matched.append("date delta")
+        if cues.get("conflict_lexicon"):
+            matched.append("conflict wording")
+        cue_text = ", ".join(matched) if matched else "conflict cues"
+        return (
+            "Review hint: possible contradiction ("
+            f"{cue_text}); compare dates, provenance, and opposing claims before accepting."
+        )
     shared_wording = shared_wording or {}
     source_overlap = safe_float(shared_wording.get("source_word_overlap"))
     target_overlap = safe_float(shared_wording.get("target_word_overlap"))
@@ -1694,6 +2146,14 @@ def bounded_candidate_limit(value: Any, maximum: int = 50) -> int:
     except (TypeError, ValueError):
         parsed = 10
     return max(1, min(parsed, maximum))
+
+
+def bounded_similarity_threshold(value: Any, default: float = 0.75) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(-1.0, min(parsed, 1.0))
 
 
 def shared_semantic_labels(source: dict[str, Any], target: dict[str, Any]) -> list[str]:

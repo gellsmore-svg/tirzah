@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Contradiction candidates:** conservative `contradicts` review candidates from
+  embedding neighbors in a high-similarity band (default 0.82–0.97) that also
+  match at least two of: shared semantic labels, origin-date delta ≥ 1 day, and
+  a conflict lexicon. Near-duplicates are excluded. Candidates stamp both nodes'
+  dates and provenance and reuse `review-semantic-edge-candidate`. CLI:
+  `contradiction-candidates`, `enqueue-contradiction-candidates`,
+  `enqueue-contradiction-batch`. Web: `/api/review/contradiction-candidates` and
+  `candidate_source: contradiction_signals`.
 - **Trust ranking (opt-in):** `runtime.trust_ranking_enabled` applies a bounded
   trust/temporal boost after lexical/hybrid order. Override the profile per
   ask (`--trust-profile`, `/api/search?trust_profile=`) or session identity.

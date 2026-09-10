@@ -26,9 +26,13 @@ Direct access to the [retrieval module](../modules/retrieval.md):
 - **Semantic candidates** — `semantic-candidates` (label-based), and the
   embedding-based `vector-semantic-candidates` / `profile-semantic-candidates`
   (node-to-node similarity used to propose edges).
-- **Semantic edges** — `semantic-edge-candidates`, `review-semantic-edge-candidate`,
-  `create-semantic-edge`: the human-reviewed path from a similarity candidate to a
-  durable graph edge.
+- **Contradiction candidates** — `contradiction-candidates` previews conservative
+  `contradicts` pairs (high similarity plus shared labels, date delta, and/or
+  conflict wording). Queue with `enqueue-contradiction-candidates` /
+  `enqueue-contradiction-batch`; review with the same semantic-edge commands.
+- **Semantic edges** — `semantic-edge-candidates` (`--relation-type contradicts`
+  to filter), `review-semantic-edge-candidate`, `create-semantic-edge`: the
+  human-reviewed path from a similarity candidate to a durable graph edge.
 
 These mirror the primitives the [deep-retrieval agent](../concepts/deep-retrieval.md)
 uses internally, exposed for direct inspection. Batch enqueuing of semantic-candidate
