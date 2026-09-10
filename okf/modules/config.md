@@ -13,6 +13,8 @@ Loaded by `load_config(path="config.yaml")`. Three groups:
 
 - **`RuntimeConfig`** — adapter selection (`answer_adapter`, `embedding_adapter`,
   `ingestion_adapter`, `ingestion_model_adapter`, `kiro_*`, `model_adapter`), `retrieval_mode`
+- **`RetrievalConfig`** — prompt/context budgets, optional `model_profiles` and
+  `tokenizer` (`approx` or `tiktoken`)
   (`direct|agentic|deep`), `hybrid_search_enabled` (**default True**), embedding
   model/dimensions + `profile_command`, Ollama settings (`ollama_base_url`,
   `ollama_model`, …), and the Hoglah settings (`hoglah_transport: store|kafka|

@@ -206,10 +206,23 @@ class QueueConfig(_StrictModel):
     max_attempts: int = Field(default=3, ge=1)
 
 
+class ModelBudgetProfile(_StrictModel):
+    prompt_token_budget: int | None = Field(default=None, ge=64)
+    reserved_response_tokens: int | None = Field(default=None, ge=16)
+    context_char_budget: int | None = Field(default=None, ge=256)
+    tokenizer: str | None = None
+    tokenizer_encoding: str | None = None
+    chars_per_token: float | None = Field(default=None, gt=0)
+
+
 class RetrievalConfig(_StrictModel):
     context_char_budget: int = Field(default=4000, ge=256)
     prompt_token_budget: int = Field(default=2000, ge=64)
     reserved_response_tokens: int = Field(default=500, ge=16)
+    tokenizer: str = "approx"
+    tokenizer_encoding: str | None = None
+    chars_per_token: float = Field(default=4.0, gt=0)
+    model_profiles: dict[str, ModelBudgetProfile] = Field(default_factory=dict)
     memory_agent_max_iterations: int = Field(default=4, ge=1, le=50)
     # Conversational memory: how many prior turns of the session to thread into
     # the prompt, and how much of each answer to keep.

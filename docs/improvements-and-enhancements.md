@@ -168,7 +168,11 @@ and traces expose the reformulation. Remaining: learned/domain synonym tables.
 - Optional dependency on `tiktoken` or equivalent for accurate counting (behind an extra).
 - Expose the effective budget and truncation decisions clearly in `build-prompt` output and answer traces.
 
-**Priority:** Medium
+**Priority:** Medium — **implemented.** `retrieval.model_profiles` plus
+`tokenizer` / `chars_per_token` resolve an effective budget per model or
+adapter. Optional `tirzah[tiktoken]` extra; envelopes report tokenizer,
+profile key, and skip counts. Remaining: shipping a tokenizer with Ollama
+models that is not cl100k.
 **Related:** `src/tirzah/retrieval/queries.py:estimate_tokens`, `build_prompt_envelope`, config, web model selector.
 
 ---

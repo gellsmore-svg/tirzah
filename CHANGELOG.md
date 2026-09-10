@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Model-aware prompt budgets:** `retrieval.model_profiles` overrides token
+  and char budgets per model or adapter. Optional `tiktoken` extra for real
+  counts (`tokenizer: tiktoken`); otherwise a configurable chars-per-token
+  approximation. `build-prompt` / answer traces expose tokenizer, profile,
+  and skip/truncation counts.
 - **Query reformulation:** near-match fallback now includes light stemming,
   1-edit typo candidates, and vocabulary-gated synonyms. Original vs
   reformulated query is recorded in query assembly and search-tool traces.

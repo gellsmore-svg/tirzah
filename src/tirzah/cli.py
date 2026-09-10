@@ -2238,16 +2238,20 @@ def main() -> None:
             return
         from tirzah.semantic import make_resolver
 
+        from tirzah.retrieval.budget import envelope_budget_args
+
+        budget_args = envelope_budget_args(config)
+        if args.token_budget:
+            budget_args["token_budget"] = args.token_budget
+        if args.reserved_response_tokens:
+            budget_args["reserved_response_tokens"] = args.reserved_response_tokens
         envelope = build_prompt_envelope(
             context_result,
             query=args.query,
             system_instruction=args.system_instruction,
-            token_budget=args.token_budget or config.retrieval.prompt_token_budget,
-            reserved_response_tokens=(
-                args.reserved_response_tokens or config.retrieval.reserved_response_tokens
-            ),
             resolver=make_resolver(config.runtime),
             semantic_strict=config.runtime.mahalath_strict,
+            **budget_args,
         )
         if envelope.get("semantic_summary"):
             print(f"# {envelope['semantic_summary']}", file=sys.stderr)

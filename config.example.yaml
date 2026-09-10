@@ -143,6 +143,15 @@ retrieval:
   context_char_budget: 4000
   prompt_token_budget: 2000
   reserved_response_tokens: 500
+  tokenizer: approx
+  # tokenizer_encoding: cl100k_base
+  # chars_per_token: 4
+  # Optional per-model or per-adapter overrides (install tirzah[tiktoken] for tiktoken).
+  # model_profiles:
+  #   gemma3:1b:
+  #     prompt_token_budget: 2000
+  #     reserved_response_tokens: 400
+  #     tokenizer: approx
   memory_agent_max_iterations: 4
 
   # --- Interpretive Deborah plan execution (SPEC §4.6) -----------------------

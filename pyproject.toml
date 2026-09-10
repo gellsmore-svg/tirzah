@@ -57,6 +57,9 @@ dev = [
 profiles = [
   "fastembed>=0.7",
 ]
+tiktoken = [
+  "tiktoken>=0.7",
+]
 # Semantic precision via Mahalath (the Tirzah->Mahalath seam, tirzah/semantic.py).
 # Mahalath must be importable in Tirzah's environment for the package-level
 # resolver: co-install it (shared venv) or `pipx inject tirzah mahalath`. Not on

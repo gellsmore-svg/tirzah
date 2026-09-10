@@ -1444,6 +1444,14 @@ def build_prompt_envelope(
     reserved_response_tokens: int = 500,
     resolver: Any | None = None,
     semantic_strict: bool = False,
+    token_counter: Any | None = None,
+    tokenizer: str = "approx",
+    tokenizer_encoding: str | None = None,
+    chars_per_token: float = 4.0,
+    context_char_budget: int | None = None,
+    profile_key: str | None = None,
+    budget_model: str | None = None,
+    budget_adapter: str | None = None,
 ) -> dict[str, Any]:
     instruction = system_instruction or default_system_instruction()
     overhead_text = "\n".join(
@@ -1457,10 +1465,21 @@ def build_prompt_envelope(
             "",
         ]
     )
-    overhead_tokens = estimate_tokens(overhead_text)
+    counter = token_counter or (lambda text: estimate_tokens(text, tokenizer=tokenizer, encoding=tokenizer_encoding, chars_per_token=chars_per_token))
+    overhead_tokens = counter(overhead_text)
     available_context_tokens = max(0, token_budget - reserved_response_tokens - overhead_tokens)
-    char_budget = available_context_tokens * 4
+    ratio = chars_per_token if chars_per_token > 0 else 4.0
+    derived_char_budget = int(available_context_tokens * ratio)
+    if context_char_budget:
+        derived_char_budget = min(derived_char_budget, int(context_char_budget)) if derived_char_budget else int(context_char_budget)
+    char_budget = max(256, derived_char_budget)
     rendered = render_context_document(context, char_budget=char_budget)
+    for _ in range(2):
+        context_tokens = counter(rendered["text"])
+        if context_tokens <= available_context_tokens or char_budget <= 256:
+            break
+        char_budget = max(256, int(char_budget * available_context_tokens / max(context_tokens, 1)))
+        rendered = render_context_document(context, char_budget=char_budget)
 
     # Semantic precision (Mahalath, optional): resolve the key terms of the query +
     # context to MPL labels/senses and condition the answer on them. Default off
@@ -1507,16 +1526,30 @@ def build_prompt_envelope(
             "reserved_response_tokens": reserved_response_tokens,
             "estimated_overhead_tokens": overhead_tokens,
             "available_context_tokens": available_context_tokens,
-            "estimated_prompt_tokens": estimate_tokens(prompt_text),
-            "estimated_context_tokens": estimate_tokens(rendered["text"]),
-            "estimated_total_with_reserved_response_tokens": estimate_tokens(prompt_text)
+            "estimated_prompt_tokens": counter(prompt_text),
+            "estimated_context_tokens": counter(rendered["text"]),
+            "estimated_total_with_reserved_response_tokens": counter(prompt_text)
             + reserved_response_tokens,
+            "tokenizer": tokenizer,
+            "tokenizer_encoding": tokenizer_encoding,
+            "chars_per_token": chars_per_token,
+            "profile_key": profile_key,
+            "model": budget_model,
+            "adapter": budget_adapter,
+            "context_char_budget": rendered["char_budget"],
         },
         "context_metadata": {
             "included": rendered["included"],
             "skipped": rendered["skipped"],
             "used_chars": rendered["used_chars"],
             "char_budget": rendered["char_budget"],
+            "skipped_count": len(rendered["skipped"]),
+            "summarized_skip_count": sum(
+                1 for row in rendered["skipped"] if row.get("included_as") == "summary"
+            ),
+            "omitted_skip_count": sum(
+                1 for row in rendered["skipped"] if row.get("included_as") == "omitted"
+            ),
         },
     }
 
@@ -1591,10 +1624,23 @@ def default_no_context_system_instruction() -> str:
     )
 
 
-def estimate_tokens(text: str) -> int:
-    if not text:
-        return 0
-    return max(1, (len(text) + 3) // 4)
+def estimate_tokens(
+    text: str,
+    *,
+    tokenizer: str = "approx",
+    encoding: str | None = None,
+    chars_per_token: float = 4.0,
+) -> int:
+    from tirzah.retrieval.budget import count_tokens
+
+    return int(
+        count_tokens(
+            text,
+            tokenizer=tokenizer,
+            encoding=encoding,
+            chars_per_token=chars_per_token,
+        )["tokens"]
+    )
 
 
 def prioritize_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:

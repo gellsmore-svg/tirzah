@@ -431,6 +431,27 @@ def _authorized_api_token(request: Request, token: str) -> bool:
     return False
 
 
+def _prompt_budget_snapshot(config) -> dict[str, Any]:
+    from tirzah.retrieval.budget import resolve_budget_plan
+
+    plan = resolve_budget_plan(
+        config.retrieval,
+        model=config.runtime.ollama_model,
+        adapter=config.runtime.answer_adapter,
+    )
+    return {
+        "profile_key": plan.profile_key,
+        "model": plan.model,
+        "adapter": plan.adapter,
+        "prompt_token_budget": plan.prompt_token_budget,
+        "reserved_response_tokens": plan.reserved_response_tokens,
+        "context_char_budget": plan.context_char_budget,
+        "tokenizer": plan.tokenizer,
+        "tokenizer_encoding": plan.tokenizer_encoding,
+        "chars_per_token": plan.chars_per_token,
+    }
+
+
 def create_app() -> FastAPI:
     config = load_config()
     db = get_database(config.mongo)
@@ -575,6 +596,7 @@ def create_app() -> FastAPI:
             "discovered_models": [model["name"] for model in discovered_models],
             "model_options": model_options,
             "ollama_timeout_seconds": config.runtime.ollama_timeout_seconds,
+            "prompt_budget": _prompt_budget_snapshot(config),
         }
 
     @app.get("/api/documents")

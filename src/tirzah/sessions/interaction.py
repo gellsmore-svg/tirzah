@@ -18,6 +18,7 @@ from tirzah.domains.registry import (
     clean_domain_id,
     conversation_domain_id_for_session,
 )
+from tirzah.retrieval.budget import envelope_budget_args, recount_tokens
 from tirzah.retrieval.deep import run_deep_answer
 from tirzah.retrieval.reformulate import (
     DEFAULT_NEAR_MATCH_MAX_CANDIDATES,
@@ -127,6 +128,16 @@ LOW_INTENT_QUERIES = {
     "good evening",
 }
 ANSWER_PROCESS_ID = "answer_query"
+
+
+def _token_budget_pair(config: AppConfig) -> dict[str, int]:
+    args = envelope_budget_args(config)
+    return {
+        "token_budget": int(args.get("token_budget") or config.retrieval.prompt_token_budget),
+        "reserved_response_tokens": int(
+            args.get("reserved_response_tokens") or config.retrieval.reserved_response_tokens
+        ),
+    }
 HTTP_MODEL_ADAPTERS = {"ollama_http"}
 DEFAULT_LOCAL_MEMORY_AGENT_ADAPTER = "ollama_cli"
 
@@ -370,8 +381,7 @@ def answer_query_agentic(
         prompt = build_agentic_answer_envelope(
             query=query,
             tool_results=tool_results,
-            token_budget=config.retrieval.prompt_token_budget,
-            reserved_response_tokens=config.retrieval.reserved_response_tokens,
+            **_token_budget_pair(config),
             proposed_controller_decision=final_controller_decision_from_trace(process_trace),
             context_proposal=final_context_proposal_from_trace(process_trace),
         )
@@ -598,17 +608,15 @@ def prepare_direct_answer_prompt(
             prompt = build_prompt_envelope(
                 context,
                 query=query,
-                token_budget=config.retrieval.prompt_token_budget,
-                reserved_response_tokens=config.retrieval.reserved_response_tokens,
                 resolver=make_resolver(config.runtime),
                 semantic_strict=config.runtime.mahalath_strict,
+                **envelope_budget_args(config),
             )
         else:
             retrieval_status = "missing_context"
             prompt = build_prompt_envelope_without_context(
                 query=query,
-                token_budget=config.retrieval.prompt_token_budget,
-                reserved_response_tokens=config.retrieval.reserved_response_tokens,
+                **_token_budget_pair(config),
             )
             prompt["context_metadata"]["retrieval_status"] = retrieval_status
     else:
@@ -619,8 +627,7 @@ def prepare_direct_answer_prompt(
             prompt = build_active_document_source_fallback_envelope(
                 active_documents=active_documents,
                 query=query,
-                token_budget=config.retrieval.prompt_token_budget,
-                reserved_response_tokens=config.retrieval.reserved_response_tokens,
+                **_token_budget_pair(config),
             )
         if prompt:
             retrieval_status = "active_document_source_fallback"
@@ -628,8 +635,7 @@ def prepare_direct_answer_prompt(
             retrieval_status = "no_focus_node"
             prompt = build_prompt_envelope_without_context(
                 query=query,
-                token_budget=config.retrieval.prompt_token_budget,
-                reserved_response_tokens=config.retrieval.reserved_response_tokens,
+                **_token_budget_pair(config),
             )
         prompt["context_metadata"]["retrieval_decision"] = retrieval_decision
     controller_decision = direct_context_controller_decision(
@@ -699,9 +705,9 @@ def inject_controller_decision_into_prompt(
     updated = {**prompt, "prompt_text": prompt_text}
     budget = {**(prompt.get("budget") or {})}
     reserved = int(budget.get("reserved_response_tokens") or 0)
-    budget["estimated_prompt_tokens"] = estimate_tokens(prompt_text)
+    budget["estimated_prompt_tokens"] = recount_tokens(prompt_text, budget)
     budget["estimated_total_with_reserved_response_tokens"] = (
-        estimate_tokens(prompt_text) + reserved
+        recount_tokens(prompt_text, budget) + reserved
     )
     updated["budget"] = budget
     return updated
@@ -758,8 +764,8 @@ def inject_history_into_prompt(prompt: dict[str, Any], history_block: str) -> di
     updated = {**prompt, "prompt_text": prompt_text}
     budget = {**(prompt.get("budget") or {})}
     reserved = int(budget.get("reserved_response_tokens") or 0)
-    budget["estimated_prompt_tokens"] = estimate_tokens(prompt_text)
-    budget["estimated_total_with_reserved_response_tokens"] = estimate_tokens(prompt_text) + reserved
+    budget["estimated_prompt_tokens"] = recount_tokens(prompt_text, budget)
+    budget["estimated_total_with_reserved_response_tokens"] = recount_tokens(prompt_text, budget) + reserved
     updated["budget"] = budget
     return updated
 
