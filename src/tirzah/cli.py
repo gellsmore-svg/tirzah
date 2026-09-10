@@ -97,7 +97,7 @@ from tirzah.sessions.endorsements import (
     list_generated_output_nodes,
     update_node_endorsement,
 )
-from tirzah.sessions.interaction import answer_query
+from tirzah.sessions.interaction import answer_query, build_query_embedding
 from tirzah.sessions.run import run_traced_interaction
 from tirzah.sessions.output_ingestion import (
     list_output_ingestion_jobs,
@@ -1925,6 +1925,9 @@ def main() -> None:
                         origin_after=parse_iso_date(args.origin_after),
                         origin_before=parse_iso_date(args.origin_before),
                         limit=args.limit,
+                        query_embedding=build_query_embedding(config.runtime, args.query),
+                        vector_search_index=config.runtime.vector_search_index or None,
+                        vector_scan_limit=config.runtime.hybrid_vector_scan_limit,
                     ),
                 },
                 indent=2,

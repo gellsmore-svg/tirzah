@@ -1821,7 +1821,7 @@ def test_search_accepts_origin_date_filters(monkeypatch) -> None:
     client = TestClient(app)
     captured = {}
 
-    def fake_search(_db, query=None, label=None, origin_after=None, origin_before=None, limit=10):
+    def fake_search(_db, query=None, label=None, origin_after=None, origin_before=None, limit=10, **kwargs):
         captured.update(
             {
                 "query": query,

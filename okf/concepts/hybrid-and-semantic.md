@@ -15,10 +15,11 @@ Two ways the [graph](graph-memory.md) is ranked beyond plain lexical search
 - **Hybrid ranking** (`hybrid_rank`) — a deterministic coarse ranker: it keeps a
   candidate clearing the lexical OR vector floor, then ranks by min-max-normalised
   lexical score blended with query-vector cosine similarity (component scores
-  exposed). Wired into `search_nodes` via an optional `query_embedding`, so the
-  [direct and agentic](retrieval-modes.md) modes both use it. Controlled by
-  `runtime.hybrid_search_enabled` (**on by default** since the real-corpus
-  validation); it only engages with a real (non-mock) embedding adapter and
+  and `match_source` exposed). `search_nodes` unions lexical hits with
+  embedding-similar nodes (Atlas `$vectorSearch` when `vector_search_index` is
+  set, otherwise a bounded cosine scan), so meaning-only matches can surface
+  without shared keywords. Controlled by `runtime.hybrid_search_enabled` (**on
+  by default**); it only engages with a real (non-mock) embedding adapter and
   degrades to lexical otherwise.
 - **Semantic search** (`query_embedding_candidate_nodes`) — pure meaning-based
   retrieval: it ranks embedded nodes by cosine similarity to a query embedding,

@@ -2417,6 +2417,11 @@ def execute_search_nodes_tool(
     identity = first_active_agent_identity(db) if session_id else None
     identity_excluded_count = 0
     identity_exclusion_sample_size = 0
+    vector_kwargs = {
+        "query_embedding": query_embedding,
+        "vector_search_index": getattr(runtime_config, "vector_search_index", None) or None,
+        "vector_scan_limit": getattr(runtime_config, "hybrid_vector_scan_limit", None),
+    }
     if identity:
         unrestricted_sample = search_nodes(
             db,
@@ -2425,6 +2430,7 @@ def execute_search_nodes_tool(
             origin_after=origin_after,
             origin_before=origin_before,
             limit=max(limit * 10, 50),
+            **vector_kwargs,
         )
         identity_exclusion_sample_size = len(unrestricted_sample)
         identity_excluded_count = sum(
@@ -2438,17 +2444,7 @@ def execute_search_nodes_tool(
             origin_before=origin_before,
             limit=limit,
             identity=identity,
-            query_embedding=query_embedding,
-        )
-    elif query_embedding is not None:
-        matches = search_nodes(
-            db,
-            query=cleaned_query,
-            label=label,
-            origin_after=origin_after,
-            origin_before=origin_before,
-            limit=limit,
-            query_embedding=query_embedding,
+            **vector_kwargs,
         )
     else:
         matches = search_nodes(
@@ -2458,6 +2454,7 @@ def execute_search_nodes_tool(
             origin_after=origin_after,
             origin_before=origin_before,
             limit=limit,
+            **vector_kwargs,
         )
     details: dict[str, Any] = {
         "normalized_query": cleaned_query,
@@ -2526,10 +2523,16 @@ def search_nodes_with_optional_identity(
     query_embedding: dict[str, Any] | None = None,
     origin_after: str | None = None,
     origin_before: str | None = None,
+    vector_search_index: str | None = None,
+    vector_scan_limit: int | None = None,
 ) -> list[dict[str, Any]]:
-    extra = {"query_embedding": query_embedding} if query_embedding is not None else {}
-    extra["origin_after"] = origin_after
-    extra["origin_before"] = origin_before
+    extra = {
+        "query_embedding": query_embedding,
+        "origin_after": origin_after,
+        "origin_before": origin_before,
+        "vector_search_index": vector_search_index,
+        "vector_scan_limit": vector_scan_limit,
+    }
     if identity:
         return search_nodes(db, query=query, label=label, limit=limit, identity=identity, **extra)
     return search_nodes(db, query=query, label=label, limit=limit, **extra)

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Hybrid lexical + vector search:** `search_nodes` unions lexical hits with
+  embedding-similar nodes (Mongo `$vectorSearch` when `vector_search_index` is
+  set, otherwise a bounded cosine scan). Results expose `hybrid_score`,
+  `embedding_similarity`, `lexical_score`, and `match_source`
+  (`lexical`/`vector`/`hybrid`). CLI and `/api/search` pass a query embedding
+  when a real embedder is configured. Degrades to lexical if embeddings are
+  missing.
 - **Additional source formats:** ingest HTML (heading outline, chrome/script
   stripped), common code files (Python AST; JS/TS/Rust/Go/Java/Ruby
   declarations), and JSON/YAML/CSV while archiving the original bytes.

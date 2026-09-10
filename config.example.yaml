@@ -20,6 +20,10 @@ runtime:
   # ingestion_fallback_to_mock: true
   # ingestion_max_source_chars: 24000
   embedding_adapter: mock
+  # hybrid_search_enabled: true
+  # Optional Atlas vector index on nodes.embedding.vector; empty uses a local scan.
+  # vector_search_index: ""
+  # hybrid_vector_scan_limit: 500
   # HTTP-backed embedding adapters are not compliant for ingestion/retrieval memory operations.
   allow_http_ingestion_adapters: false
   embedding_model: nomic-embed-text:latest

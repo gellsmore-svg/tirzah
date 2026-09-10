@@ -72,11 +72,11 @@ def search_nodes(
     limit: int = 20,
     identity: dict[str, Any] | None = None,
     query_embedding: dict[str, Any] | None = None,
+    vector_search_index: str | None = None,
+    vector_scan_limit: int | None = None,
 ) -> list[dict[str, Any]]:
     store = as_memory_store(db)
     filters: dict[str, Any] = active_node_filter()
-    if query:
-        filters["$or"] = text_query_filters(query)
     if label:
         filters["labels"] = label
     if endorsement_label:
@@ -98,17 +98,32 @@ def search_nodes(
     if origin_filter:
         filters["origin_date"] = origin_filter
 
+    lexical_filters = dict(filters)
+    if query:
+        lexical_filters["$or"] = text_query_filters(query)
+
     candidate_limit = max(limit * 5, 50) if query else limit
     if identity:
         candidate_limit = max(candidate_limit * 2, limit * 10, 50)
-    nodes = store.find_nodes(filters, sort=("created_at", -1), limit=candidate_limit)
+    nodes = store.find_nodes(lexical_filters, sort=("created_at", -1), limit=candidate_limit)
+    if query and query_embedding is not None:
+        vector_nodes = collect_vector_candidate_nodes(
+            store,
+            query_embedding,
+            filters=filters,
+            limit=candidate_limit,
+            scan_limit=vector_scan_limit,
+            index_name=vector_search_index,
+        )
+        nodes = merge_candidate_pools(nodes, vector_nodes)
+        nodes = attach_query_similarity(nodes, query_embedding)
     if identity:
         nodes = filter_nodes_for_identity(nodes, identity)
     if query:
         if query_embedding is not None:
-            ranked = hybrid_rank(attach_query_similarity(nodes, query_embedding), query, limit=limit)
+            ranked = hybrid_rank(nodes, query, limit=limit)
             if ranked:  # fall back to lexical only if the relevance gate emptied the pool
-                return [serialize_node(item["node"]) for item in ranked]
+                return [serialize_ranked_node(item) for item in ranked]
         nodes.sort(key=lambda node: node_search_sort_key(node, query), reverse=True)
     return [serialize_node(node) for node in nodes[:limit]]
 
@@ -299,16 +314,26 @@ def merge_candidate_pools(
         if not key:
             continue
         if key not in merged:
-            merged[key] = dict(candidate)
+            node = dict(candidate)
+            node["_match_pools"] = {"vector"}
+            merged[key] = node
             order.append(key)
     for node in lexical_nodes:
         key = node_identity(node)
         if not key:
             continue
         if key in merged:
-            merged[key] = {**dict(node), "embedding_similarity": merged[key].get("embedding_similarity")}
+            pools = set(merged[key].get("_match_pools") or [])
+            pools.add("lexical")
+            merged[key] = {
+                **dict(node),
+                "embedding_similarity": merged[key].get("embedding_similarity"),
+                "_match_pools": pools,
+            }
         else:
-            merged[key] = dict(node)
+            lexical = dict(node)
+            lexical["_match_pools"] = {"lexical"}
+            merged[key] = lexical
             order.append(key)
     return [merged[key] for key in order]
 
@@ -367,6 +392,117 @@ def hybrid_rank(
         )
     )
     return scored if limit is None else scored[:limit]
+
+
+def ranked_match_source(
+    item: dict[str, Any],
+    *,
+    min_lexical_score: int = DEFAULT_HYBRID_MIN_LEXICAL_SCORE,
+    min_vector_similarity: float = DEFAULT_HYBRID_MIN_VECTOR_SIMILARITY,
+) -> str:
+    pools = (item.get("node") or {}).get("_match_pools")
+    if isinstance(pools, set) and pools:
+        if "lexical" in pools and "vector" in pools:
+            return "hybrid"
+        if "vector" in pools:
+            return "vector"
+        return "lexical"
+    lexical_hit = item["lexical_score"] >= min_lexical_score
+    vector_hit = item["vector_similarity"] >= min_vector_similarity
+    if lexical_hit and vector_hit:
+        return "hybrid"
+    if vector_hit:
+        return "vector"
+    return "lexical"
+
+
+def serialize_ranked_node(item: dict[str, Any]) -> dict[str, Any]:
+    payload = serialize_node(item["node"])
+    payload["lexical_score"] = item["lexical_score"]
+    payload["embedding_similarity"] = round(float(item["vector_similarity"]), 6)
+    payload["hybrid_score"] = item["hybrid_score"]
+    payload["match_source"] = ranked_match_source(item)
+    return payload
+
+
+def collect_vector_candidate_nodes(
+    store: MemoryStore,
+    query_embedding: dict[str, Any],
+    *,
+    filters: dict[str, Any] | None = None,
+    limit: int = 50,
+    scan_limit: int | None = None,
+    index_name: str | None = None,
+    min_similarity: float = DEFAULT_HYBRID_MIN_VECTOR_SIMILARITY,
+) -> list[dict[str, Any]]:
+    payload = valid_embedding_payload(query_embedding)
+    if not payload:
+        return []
+    base_filters = dict(filters or {})
+    base_filters.update(
+        {
+            "embedding.model": {"$exists": True},
+            "embedding.dimensions": {"$exists": True},
+        }
+    )
+    scan_limit = bounded_embedding_candidate_scan_limit(scan_limit, limit)
+    rows = None
+    if index_name:
+        rows = atlas_vector_search_nodes(store, payload, index_name=index_name, limit=scan_limit)
+    if rows is None:
+        rows = list(store.find_nodes(base_filters, limit=scan_limit))
+    candidates: list[dict[str, Any]] = []
+    seen_text_keys: set[str] = set()
+    for candidate in rows:
+        if "source_root" in (candidate.get("labels") or []):
+            continue
+        if candidate.get("status") in INACTIVE_RETRIEVAL_STATUSES:
+            continue
+        candidate_embedding = valid_embedding_payload(candidate.get("embedding"))
+        if not candidate_embedding or not comparable_embeddings(payload, candidate_embedding):
+            continue
+        text_key = normalized_candidate_text_key(str(candidate.get("text") or ""))
+        if text_key and text_key in seen_text_keys:
+            continue
+        if text_key:
+            seen_text_keys.add(text_key)
+        similarity = cosine_similarity(payload["vector"], candidate_embedding["vector"])
+        if similarity < min_similarity:
+            continue
+        node = dict(candidate)
+        node["embedding_similarity"] = round(similarity, 6)
+        candidates.append(node)
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
+def atlas_vector_search_nodes(
+    store: MemoryStore,
+    query_embedding: dict[str, Any],
+    *,
+    index_name: str,
+    limit: int,
+) -> list[dict[str, Any]] | None:
+    collection = getattr(getattr(store, "db", None), "nodes", None)
+    aggregate = getattr(collection, "aggregate", None)
+    if not callable(aggregate):
+        return None
+    pipeline = [
+        {
+            "$vectorSearch": {
+                "index": index_name,
+                "path": "embedding.vector",
+                "queryVector": query_embedding["vector"],
+                "numCandidates": max(limit * 20, 100),
+                "limit": max(limit, 1),
+            }
+        }
+    ]
+    try:
+        return list(aggregate(pipeline))
+    except Exception:
+        return None
 
 
 def attach_query_similarity(
@@ -656,11 +792,10 @@ def query_embedding_candidate_nodes(
     `search_nodes`, which filters lexically first.
 
     A bounded linear scan over nodes carrying a *comparable* embedding (same model
-    + dimensions as the query). There is no ANN index, so the scan is capped
-    (`candidate_scan_limit`, default ~25x the limit, hard max 10k) and may be
-    approximate on very large corpora — pass `label` to focus the scan. Returns
-    serialized nodes with `embedding_similarity` set; empty if the query embedding
-    is missing/unusable.
+    + dimensions as the query), or Mongo `$vectorSearch` when a vector index name
+    is configured. The scan is capped (`candidate_scan_limit`, default ~25x the
+    limit, hard max 10k). Returns serialized nodes with `embedding_similarity`
+    set; empty if the query embedding is missing/unusable.
     """
     store = as_memory_store(db)
     payload = valid_embedding_payload(query_embedding)
@@ -676,47 +811,31 @@ def query_embedding_candidate_nodes(
     except (TypeError, ValueError):
         threshold = 0.0
     threshold = max(-1.0, min(threshold, 1.0))
-    scan_limit = bounded_embedding_candidate_scan_limit(candidate_scan_limit, bounded_limit)
-
-    filters: dict[str, Any] = {
-        "embedding.model": {"$exists": True},
-        "embedding.dimensions": {"$exists": True},
-    }
+    filters: dict[str, Any] = dict(active_node_filter())
     if label:
         filters["labels"] = label
-
-    candidates: list[dict[str, Any]] = []
-    seen_text_keys: set[str] = set()
-    for index, candidate in enumerate(store.find_nodes(filters, limit=scan_limit + 1)):
-        if index >= scan_limit:
-            break
-        if "source_root" in (candidate.get("labels") or []):
-            continue
-        if is_superseded_node(candidate):
-            continue
-        candidate_embedding = valid_embedding_payload(candidate.get("embedding"))
-        if not candidate_embedding:
-            continue
-        if not comparable_embeddings(payload, candidate_embedding):
-            continue
-        text_key = normalized_candidate_text_key(str(candidate.get("text") or ""))
-        if text_key and text_key in seen_text_keys:
-            continue
-        if text_key:
-            seen_text_keys.add(text_key)
-        similarity = cosine_similarity(payload["vector"], candidate_embedding["vector"])
-        if similarity < threshold:
-            continue
-        candidates.append(
+    raw = collect_vector_candidate_nodes(
+        store,
+        payload,
+        filters=filters,
+        limit=bounded_limit,
+        scan_limit=candidate_scan_limit,
+        min_similarity=threshold,
+    )
+    raw.sort(key=lambda node: (-float(node.get("embedding_similarity") or 0.0), node_identity(node)))
+    serialized = []
+    for candidate in raw[:bounded_limit]:
+        embedding = valid_embedding_payload(candidate.get("embedding")) or {}
+        serialized.append(
             {
                 **serialize_node(candidate),
-                "embedding_similarity": round(similarity, 6),
-                "embedding_model": candidate_embedding.get("model"),
-                "embedding_dimensions": candidate_embedding.get("dimensions"),
+                "embedding_similarity": candidate.get("embedding_similarity"),
+                "embedding_model": embedding.get("model"),
+                "embedding_dimensions": embedding.get("dimensions"),
+                "match_source": "vector",
             }
         )
-    candidates.sort(key=lambda c: (-c["embedding_similarity"], node_identity(c)))
-    return candidates[:bounded_limit]
+    return serialized
 
 
 def semantic_labels(labels: list[str]) -> list[str]:

@@ -91,6 +91,10 @@ class RuntimeConfig(_StrictModel):
     # (non-mock) embedding adapter and degrades safely to lexical otherwise, so
     # it is harmless under the default mock adapter.
     hybrid_search_enabled: bool = True
+    # Optional Atlas/MongoDB vector search index on nodes.embedding.vector.
+    # Empty = local cosine scan fallback.
+    vector_search_index: str = ""
+    hybrid_vector_scan_limit: int = Field(default=500, ge=20, le=10_000)
     ollama_model: str = "gemma3:1b"
     memory_agent_model: str | None = None
     ollama_format: str | None = None

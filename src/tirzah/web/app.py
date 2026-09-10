@@ -89,7 +89,12 @@ from tirzah.retrieval.queries import (
 )
 from tirzah.retrieval.trust import trust_temporal_diagnostic_for_node
 from tirzah.sessions.exchanges import recent_exchanges
-from tirzah.sessions.interaction import answer_query, backfill_chunks, backfill_turn_embeddings
+from tirzah.sessions.interaction import (
+    answer_query,
+    backfill_chunks,
+    backfill_turn_embeddings,
+    build_query_embedding,
+)
 from tirzah.sessions.run import run_traced_interaction
 from galeed import (
     EventType,
@@ -898,6 +903,9 @@ def create_app() -> FastAPI:
                 origin_after=parse_iso_date(origin_after),
                 origin_before=parse_iso_date(origin_before),
                 limit=limit,
+                query_embedding=build_query_embedding(config.runtime, query or None),
+                vector_search_index=config.runtime.vector_search_index or None,
+                vector_scan_limit=config.runtime.hybrid_vector_scan_limit,
             ),
         }
 

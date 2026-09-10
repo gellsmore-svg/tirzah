@@ -2036,15 +2036,58 @@ def test_attach_query_similarity_sets_cosine_for_comparable_nodes() -> None:
 
 
 class _StubStore(MemoryStore):
-    """A MemoryStore that returns fixed nodes, bypassing Mongo filter evaluation
-    (the FakeDb does not evaluate regex text filters)."""
+    """A MemoryStore that returns fixed nodes with light filter evaluation."""
 
     def __init__(self, nodes):
         self._stub_nodes = nodes
 
     def find_nodes(self, filters, sort=None, limit=None):
-        nodes = [dict(node) for node in self._stub_nodes]
+        nodes = [dict(node) for node in self._stub_nodes if _stub_matches(node, filters or {})]
         return nodes[:limit] if limit else nodes
+
+
+def _stub_matches(node, filters):
+    for key, expected in filters.items():
+        if key == "$or":
+            if not any(_stub_option_matches(node, option) for option in expected):
+                return False
+            continue
+        if key == "embedding.model" and isinstance(expected, dict) and "$exists" in expected:
+            has_model = bool((node.get("embedding") or {}).get("model"))
+            if has_model is not bool(expected["$exists"]):
+                return False
+            continue
+        if key == "embedding.dimensions" and isinstance(expected, dict) and "$exists" in expected:
+            has_dims = (node.get("embedding") or {}).get("dimensions") is not None
+            if has_dims is not bool(expected["$exists"]):
+                return False
+            continue
+        if isinstance(expected, dict) and "$nin" in expected:
+            if node.get(key) in expected["$nin"]:
+                return False
+            continue
+        if isinstance(expected, dict) and "$ne" in expected:
+            if node.get(key) == expected["$ne"]:
+                return False
+            continue
+        if hasattr(expected, "search"):
+            if not expected.search(str(node.get(key) or "")):
+                return False
+            continue
+        if node.get(key) != expected:
+            return False
+    return True
+
+
+def _stub_option_matches(node, option):
+    for field, expected in option.items():
+        value = str(node.get(field) or "")
+        if hasattr(expected, "search"):
+            if expected.search(value):
+                return True
+        elif value == str(expected):
+            return True
+    return False
 
 
 def test_search_nodes_hybrid_reranks_by_query_embedding() -> None:
@@ -2081,6 +2124,70 @@ def test_search_nodes_hybrid_reranks_by_query_embedding() -> None:
     # the vector-similar (but lexically weaker) node is lifted above the
     # lexically-stronger one once the query embedding is supplied.
     assert hybrid == ["Storage Internals", "Memory Systems Overview"]
+    assert [row.get("match_source") for row in search_nodes(
+        store, query="memory", query_embedding=_embedding([1.0, 0.0])
+    )][0] in {"hybrid", "vector", "lexical"}
+
+
+def test_search_nodes_includes_vector_only_matches() -> None:
+    doc_id = ObjectId()
+    store = _StubStore(
+        [
+            {
+                "_id": ObjectId(),
+                "document_id": doc_id,
+                "tree_id": ObjectId(),
+                "title": "Memory Systems Overview",
+                "text": "memory",
+                "labels": ["source_chunk"],
+            },
+            {
+                "_id": ObjectId(),
+                "document_id": doc_id,
+                "tree_id": ObjectId(),
+                "title": "Closed Loop",
+                "text": "a superconducting cosmic string",
+                "labels": ["source_chunk"],
+                "embedding": _embedding([1.0, 0.0]),
+            },
+        ]
+    )
+    lexical = [row["title"] for row in search_nodes(store, query="memory")]
+    assert lexical == ["Memory Systems Overview"]
+    hybrid = search_nodes(store, query="memory", query_embedding=_embedding([1.0, 0.0]))
+    titles = [row["title"] for row in hybrid]
+    assert "Closed Loop" in titles
+    vector_row = next(row for row in hybrid if row["title"] == "Closed Loop")
+    assert vector_row["match_source"] == "vector"
+    assert vector_row["hybrid_score"] is not None
+
+
+def test_atlas_vector_search_falls_back_to_local_scan() -> None:
+    doc_id = ObjectId()
+    node = {
+        "_id": ObjectId(),
+        "document_id": doc_id,
+        "tree_id": ObjectId(),
+        "title": "Closed Loop",
+        "text": "a superconducting cosmic string",
+        "labels": ["source_chunk"],
+        "embedding": _embedding([1.0, 0.0]),
+    }
+    store = _StubStore([node])
+
+    class _Nodes:
+        def aggregate(self, _pipeline):
+            raise RuntimeError("no atlas")
+
+    store.db = type("DB", (), {"nodes": _Nodes()})()
+    rows = search_nodes(
+        store,
+        query="memory",
+        query_embedding=_embedding([1.0, 0.0]),
+        vector_search_index="node_embeddings",
+    )
+    assert [row["title"] for row in rows] == ["Closed Loop"]
+    assert rows[0]["match_source"] == "vector"
 
 
 def test_query_embedding_candidate_nodes_ranks_by_meaning() -> None:

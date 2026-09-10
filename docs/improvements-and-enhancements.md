@@ -119,7 +119,11 @@ richer language grammars and binary/office formats.
 - Make vector usage optional and gated by config + presence of embeddings (graceful degradation to current behavior).
 - Surface "this result came from vector similarity" in developer traces and the plain activity log.
 
-**Priority:** High
+**Priority:** High — **implemented.** Direct/agentic/`search-nodes`/`/api/search`
+merge lexical candidates with a vector pool (`$vectorSearch` or local scan),
+hybrid-rank them, and return `match_source` plus component scores. Gated by
+`hybrid_search_enabled` + a non-mock embedding adapter. Remaining: Atlas index
+provisioning in `ensure_indexes` (index still created outside the app).
 **Related:** `src/tirzah/retrieval/queries.py`, `src/tirzah/db/indexes.py`, embedding backfill modules, `config.runtime`, Mongo vector search open question.
 
 ### 2.2 Budget-Aware Hierarchical Summarization and Skip Metadata
