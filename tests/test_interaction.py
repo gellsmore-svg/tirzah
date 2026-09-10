@@ -237,6 +237,8 @@ def end_to_end_matches(row, query):
                 return False
             if "$ne" in expected and actual == expected["$ne"]:
                 return False
+            if "$nin" in expected and actual in expected["$nin"]:
+                return False
             continue
         if isinstance(actual, list):
             if expected not in actual:

@@ -492,6 +492,9 @@ def matches(row, query):
         elif isinstance(expected, dict) and "$ne" in expected:
             if actual == expected["$ne"]:
                 return False
+        elif isinstance(expected, dict) and "$nin" in expected:
+            if actual in expected["$nin"]:
+                return False
         elif actual != expected:
             return False
     return True

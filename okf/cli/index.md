@@ -15,7 +15,9 @@ The CLI is `tirzah` (legacy `mnemosyne` alias). `--config` is a **global** flag
 - **[Ask & answer](ask-chat.md)** — `ask`, `chat`, `history`, and the explicit
   context steps `compile-context` / `render-context` / `build-prompt`.
 - **[Ingest & documents](ingest.md)** — `init`, `serve`, `db-ping`, `ingest-one`/
-  `ingest-folder`, `rebuild-*`, the inbox (`process-inbox`), `list-docs`/`show-doc`.
+  `ingest-folder`, `rebuild-*`, the inbox (`process-inbox`), `list-docs`/`show-doc`,
+  and LLM-proposal review (`list-proposed-ingestions` / `promote-ingestion` /
+  `reject-ingestion`).
 - **[Retrieval tools](retrieval-tools.md)** — `search-nodes`, `node-context`,
   `graph-edges`, `expand-*`, and the semantic-candidate / semantic-edge commands.
 - **[Backfills & queue](backfill-queue.md)** — `backfill-*`, the embedding/profile

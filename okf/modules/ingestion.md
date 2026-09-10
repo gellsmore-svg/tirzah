@@ -12,8 +12,10 @@ timestamp: 2026-06-19T00:00:00Z
 Turns source documents into the [graph memory](../concepts/graph-memory.md):
 
 - **`parser.py`** — deterministic heading/paragraph parsing into the
-  `source_root → source_section → source_chunk` tree (the V1 mock-adapter baseline;
-  LLM-assisted chunking is post-V1).
+  `source_root → source_section → source_chunk` tree (the default mock-adapter
+  baseline). Optional `ingestion_adapter: llm` proposes the same tree via a
+  local Ollama model or an external coding CLI (Kiro, Claude, Codex, Gemini, Grok);
+  proposed trees stay `pending_review` until `promote-ingestion`.
 - **`worker.py`** — the ingestion worker: commits a parsed tree, embedding each
   node via the configured [embedding adapter](adapters.md), and writes provenance/
   epoch metadata. Drives the inbox queue (`process-inbox` / `process-next`).

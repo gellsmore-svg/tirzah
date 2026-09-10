@@ -12,7 +12,8 @@ timestamp: 2026-06-19T00:00:00Z
 - **`ask`** — answer a single query over the [graph](../concepts/graph-memory.md).
   `--retrieval-mode {direct,agentic,deep}` selects the
   [strategy](../concepts/retrieval-modes.md); `--adapter` / `--model` choose the
-  [answer model](../modules/adapters.md); `--json` emits the full result (answer,
+  [answer model](../modules/adapters.md) (`mock`, `ollama_http`, `ollama_cli`,
+  `hoglah`, `kiro_cli`, `claude_cli`, `codex_cli`, `google_cli`, `grok_cli`); `--json` emits the full result (answer,
   used node ids, retrieval status, process trace).
 - **`chat`** — a multi-turn conversation, persisted as a [session](../concepts/sessions-and-continuity.md)
   of exchanges.

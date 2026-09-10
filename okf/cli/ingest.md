@@ -19,6 +19,9 @@ timestamp: 2026-06-19T00:00:00Z
 - **`enqueue-inbox` / `process-next` / `process-inbox`** — the ingestion **inbox
   queue**: stage sources, then process them (one or all).
 - **`list-docs` / `show-doc`** — list ingested documents and inspect one.
+- **`list-proposed-ingestions` / `promote-ingestion` / `reject-ingestion`** —
+  review-gate for `ingestion_adapter: llm` trees (`pending_review` until
+  promoted; rejected trees stay out of retrieval).
 
 Embeddings are generated during ingestion (per the configured
 [embedding adapter](../modules/adapters.md)); embedding an existing corpus at scale

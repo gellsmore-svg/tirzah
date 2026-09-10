@@ -35,7 +35,14 @@ This document complements (and does not duplicate) the staged roadmap in `docs/b
 - Always preserve the exact source text in `source_chunk` nodes.
 - Provide `tirzah compare-rebuild <document_id>` or similar that shows side-by-side deterministic vs proposed trees.
 
-**Priority:** High
+**Priority:** High — **implemented (opt-in).** `ingestion_adapter: llm` proposes
+verbatim `source_root`/`source_section`/`source_chunk` trees via
+`ingestion_model_adapter` (`ollama_http` / `ollama_cli` / `kiro_cli` /
+`claude_cli` / `codex_cli` / `google_cli` / `grok_cli` / `hoglah` / `mock`), commits them as
+`ingestion_kind: llm_proposed` / `pending_review`, and
+keeps mock as the default. Remaining work: side-by-side `compare-rebuild`,
+review-gated relation promotion from the proposal, and LLM-assisted summaries
+that are themselves endorsed.
 **Related:** `src/tirzah/adapters/`, `src/tirzah/db/repositories.py:commit_ingestion` and `rebuild_document`, `docs/development-plan.md`, `docs/build-roadmap.md` (Stage 3+ gaps).
 
 ### 1.2 Source Diffing and Targeted Rebuilds

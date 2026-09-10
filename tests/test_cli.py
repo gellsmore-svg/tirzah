@@ -228,6 +228,14 @@ def test_init_config_payload_hoglah_uses_optional_answer_queue() -> None:
     assert payload["runtime"]["hoglah_db_path"] == "data/hoglah/jobs.sqlite3"
 
 
+def test_init_config_payload_kiro_cli_uses_headless_chat() -> None:
+    payload = init_config_payload(docker=False, runtime_choice="kiro_cli")
+
+    assert payload["runtime"]["answer_adapter"] == "kiro_cli"
+    assert payload["runtime"]["ingestion_model_adapter"] == "kiro_cli"
+    assert payload["runtime"]["embedding_adapter"] == "mock"
+
+
 def test_write_initial_config_creates_config_and_data_dirs(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     config_path = tmp_path / "config.yaml"

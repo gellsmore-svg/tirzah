@@ -23,6 +23,12 @@ _ADAPTER_CAPS: dict[str, dict[str, bool]] = {
     "ollama_cli": {"uses_live_model": True, "uses_mock": False, "can_answer": True, "can_embed": True, "requires_hoglah": False, "requires_ollama_binary": True},
     "ollama_http": {"uses_live_model": True, "uses_mock": False, "can_answer": True, "can_embed": True, "requires_hoglah": False},
     "hoglah": {"uses_live_model": True, "uses_mock": False, "can_answer": True, "can_embed": True, "requires_hoglah": True},
+    "kiro_cli": {"uses_live_model": True, "uses_mock": False, "can_answer": True, "can_embed": False, "requires_hoglah": False, "requires_kiro_cli": True},
+    "claude_cli": {"uses_live_model": True, "uses_mock": False, "can_answer": True, "can_embed": False, "requires_hoglah": False, "requires_claude_cli": True},
+    "codex_cli": {"uses_live_model": True, "uses_mock": False, "can_answer": True, "can_embed": False, "requires_hoglah": False, "requires_codex_cli": True},
+    "google_cli": {"uses_live_model": True, "uses_mock": False, "can_answer": True, "can_embed": False, "requires_hoglah": False, "requires_google_cli": True},
+    "gemini_cli": {"uses_live_model": True, "uses_mock": False, "can_answer": True, "can_embed": False, "requires_hoglah": False, "requires_google_cli": True},
+    "grok_cli": {"uses_live_model": True, "uses_mock": False, "can_answer": True, "can_embed": False, "requires_hoglah": False, "requires_grok_cli": True},
     # Embedding-only adapters (can't answer).
     "local_command": {"uses_live_model": True, "uses_mock": False, "can_answer": False, "can_embed": True, "requires_hoglah": False},
     "ollama_powershell": {"uses_live_model": True, "uses_mock": False, "can_answer": False, "can_embed": True, "requires_hoglah": False, "requires_powershell": True},

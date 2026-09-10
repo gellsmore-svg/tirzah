@@ -31,6 +31,10 @@ inference — and is usable from a CLI or a web interface.
 - **Optional queue routing** — route model calls through
   [Hoglah](https://github.com/gellsmore-svg/hoglah) so every inference is
   serialized through one durable, restart-safe queue.
+- **Optional LLM-assisted ingestion** — `ingestion_adapter: llm` proposes
+  hierarchical chunks via a local Ollama model or a headless coding CLI
+  (Kiro, Claude Code, Codex, Gemini, Grok); trees stay out of retrieval until
+  `tirzah promote-ingestion`. Mock parsing remains the default.
 
 > **Status:** early V1 — the "local memory workbench" release. Several pieces are
 > scaffold-depth (lexical retrieval, observational governance, mock-default
@@ -79,9 +83,10 @@ tirzah ask "Research the current evidence for X" --web
 tirzah serve
 ```
 
-`ask`/`chat` use the retrieval pipeline and the local Ollama CLI answer adapter
+`ask`/`chat` use the retrieval pipeline and the local Ollama HTTP answer adapter
 by default (`gemma3:1b` per `config.example.yaml`); pass `--model <name>` to
-override per request, or `--adapter mock` for an offline deterministic answer.
+override per request, `--adapter mock` for an offline deterministic answer, or
+`--adapter {kiro_cli,claude_cli,codex_cli,google_cli,grok_cli}` for a headless coding CLI.
 
 ## Recursive Deborah request planning
 

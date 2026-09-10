@@ -31,8 +31,7 @@ This file incorporates the durable findings from the June 14 review artifacts no
 ## Ingestion Intelligence
 
 - The V1 ingestion baseline is deterministic heading/paragraph parsing through the mock ingestion adapter, selected by `runtime.ingestion_adapter: mock`.
-- CLI, rebuild, worker, and web processing now share an ingestion adapter boundary, but no review-gated LLM-assisted ingestion implementation ships in V1.
-- Review-gated LLM-assisted chunking, relation extraction, and richer metadata generation remain post-V1 work.
+- CLI, rebuild, worker, and web processing share an ingestion adapter boundary. `ingestion_adapter: llm` is an opt-in, review-gated chunker (local Ollama or an external coding CLI); proposed trees are `pending_review` until `promote-ingestion`. Relation extraction and richer metadata generation remain post-V1 work.
 
 ## Operations And Naming
 

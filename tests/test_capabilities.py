@@ -6,6 +6,13 @@ def test_adapter_capabilities_known_and_unknown():
     assert adapter_capabilities("mock")["uses_mock"] is True
     assert adapter_capabilities("hoglah")["requires_hoglah"] is True
     assert adapter_capabilities("ollama_http")["uses_live_model"] is True
+    assert adapter_capabilities("kiro_cli")["can_answer"] is True
+    assert adapter_capabilities("kiro_cli")["requires_kiro_cli"] is True
+    assert adapter_capabilities("claude_cli")["requires_claude_cli"] is True
+    assert adapter_capabilities("codex_cli")["requires_codex_cli"] is True
+    assert adapter_capabilities("google_cli")["requires_google_cli"] is True
+    assert adapter_capabilities("gemini_cli")["can_answer"] is True
+    assert adapter_capabilities("grok_cli")["requires_grok_cli"] is True
     assert adapter_capabilities("nope") == {"unknown": True}
 
 

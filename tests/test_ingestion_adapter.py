@@ -3,6 +3,8 @@ from types import SimpleNamespace
 import pytest
 
 from tirzah.adapters.ingestion import ingestion_adapter
+from tirzah.config import RuntimeConfig
+from tirzah.adapters.llm_ingestion import LlmIngestionAdapter
 from tirzah.adapters.mock import MockIngestionAdapter
 
 
@@ -21,3 +23,9 @@ def test_ingestion_adapter_rejects_unknown_adapter() -> None:
 
     with pytest.raises(ValueError, match="Unknown ingestion adapter: llm_ingestion"):
         ingestion_adapter(config)
+
+
+def test_ingestion_adapter_accepts_llm_selection() -> None:
+    config = RuntimeConfig(ingestion_adapter="llm")
+
+    assert isinstance(ingestion_adapter(config), LlmIngestionAdapter)

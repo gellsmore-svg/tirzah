@@ -120,6 +120,8 @@ def matches(row, query):
         if isinstance(expected, dict):
             if "$ne" in expected and value == expected["$ne"]:
                 return False
+            if "$nin" in expected and value in expected["$nin"]:
+                return False
             if "$in" in expected and value not in expected["$in"]:
                 return False
             continue

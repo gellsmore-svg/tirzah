@@ -101,6 +101,84 @@ runtime:
     assert config.runtime.ingestion_adapter == "mock"
 
 
+def test_load_config_reads_llm_ingestion_and_kiro_settings(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        """
+runtime:
+  ingestion_adapter: llm
+  ingestion_model_adapter: kiro_cli
+  ingestion_model: claude-sonnet
+  kiro_executable: /usr/local/bin/kiro-cli
+  kiro_timeout_seconds: 90
+  kiro_effort: low
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_file)
+
+    assert config.runtime.ingestion_adapter == "llm"
+    assert config.runtime.ingestion_model_adapter == "kiro_cli"
+    assert config.runtime.ingestion_model == "claude-sonnet"
+    assert str(config.runtime.kiro_executable) == "/usr/local/bin/kiro-cli"
+    assert config.runtime.kiro_timeout_seconds == 90
+    assert config.runtime.kiro_effort == "low"
+
+
+def test_load_config_reads_claude_codex_and_google_cli_settings(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        """
+runtime:
+  answer_adapter: claude_cli
+  ingestion_model_adapter: google_cli
+  claude_executable: /usr/bin/claude
+  claude_max_turns: 2
+  claude_bare: false
+  codex_sandbox: workspace-write
+  codex_ephemeral: false
+  google_executable: /usr/bin/gemini
+  google_model: gemini-2.5-flash
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_file)
+
+    assert config.runtime.answer_adapter == "claude_cli"
+    assert str(config.runtime.claude_executable) == "/usr/bin/claude"
+    assert config.runtime.claude_max_turns == 2
+    assert config.runtime.claude_bare is False
+    assert config.runtime.codex_sandbox == "workspace-write"
+    assert config.runtime.codex_ephemeral is False
+    assert str(config.runtime.google_executable) == "/usr/bin/gemini"
+    assert config.runtime.google_model == "gemini-2.5-flash"
+
+
+def test_load_config_reads_grok_cli_settings(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        """
+runtime:
+  answer_adapter: grok_cli
+  grok_executable: /home/cello/.local/bin/grok
+  grok_model: grok-4.6
+  grok_max_turns: 2
+  grok_no_auto_update: false
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_file)
+
+    assert config.runtime.answer_adapter == "grok_cli"
+    assert str(config.runtime.grok_executable) == "/home/cello/.local/bin/grok"
+    assert config.runtime.grok_model == "grok-4.6"
+    assert config.runtime.grok_max_turns == 2
+    assert config.runtime.grok_no_auto_update is False
+
+
 def test_load_config_defaults_ingestion_adapter_to_mock(tmp_path: Path) -> None:
     config_file = tmp_path / "config.yaml"
     config_file.write_text("runtime: {}\n", encoding="utf-8")

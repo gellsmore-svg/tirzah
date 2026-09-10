@@ -1677,6 +1677,8 @@ def matches(row, query):
                 return False
             if "$ne" in expected and actual == expected["$ne"]:
                 return False
+            if "$nin" in expected and actual in expected["$nin"]:
+                return False
             if "$gt" in expected and not (actual is not None and actual > expected["$gt"]):
                 return False
             continue

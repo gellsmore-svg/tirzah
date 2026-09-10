@@ -47,6 +47,9 @@ class FakeColl:
                 if isinstance(val, dict) and "$ne" in val:
                     if row.get(key) == val["$ne"]:
                         ok = False
+                elif isinstance(val, dict) and "$nin" in val:
+                    if row.get(key) in val["$nin"]:
+                        ok = False
                 elif row.get(key) != val:
                     ok = False
             if ok:

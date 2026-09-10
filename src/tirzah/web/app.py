@@ -61,7 +61,10 @@ from tirzah.db.repositories import (
     enqueue_semantic_edge_candidates,
     enqueue_vector_semantic_edge_candidate_batch,
     enqueue_vector_semantic_edge_candidates,
+    list_proposed_ingestion_trees,
     list_semantic_edge_candidates,
+    promote_ingestion_tree,
+    reject_ingestion_tree,
     review_semantic_edge_candidate,
 )
 from tirzah.db.queue import enqueue_source, queue_summary, recent_jobs
@@ -171,6 +174,13 @@ class EndorseNodeRequest(BaseModel):
     endorsement: str
     reviewer: str = "user"
     note: str | None = None
+
+
+class ReviewIngestionTreeRequest(BaseModel):
+    identifier: str
+    reviewer: str = "user"
+    note: str | None = None
+    endorsement: str | None = None
 
 
 class ReviewSemanticEdgeCandidateRequest(BaseModel):
@@ -702,6 +712,32 @@ def create_app() -> FastAPI:
             db,
             node_id=request.node_id,
             endorsement_label=request.endorsement,
+            reviewer=request.reviewer,
+            note=request.note,
+        )
+
+    @app.get("/api/review/proposed-ingestions")
+    def proposed_ingestions(limit: int = 20) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "trees": list_proposed_ingestion_trees(db, limit=limit),
+        }
+
+    @app.post("/api/review/promote-ingestion")
+    def promote_ingestion(request: ReviewIngestionTreeRequest) -> dict[str, Any]:
+        return promote_ingestion_tree(
+            db,
+            request.identifier,
+            reviewer=request.reviewer,
+            note=request.note,
+            endorsement_label=request.endorsement,
+        )
+
+    @app.post("/api/review/reject-ingestion")
+    def reject_ingestion(request: ReviewIngestionTreeRequest) -> dict[str, Any]:
+        return reject_ingestion_tree(
+            db,
+            request.identifier,
             reviewer=request.reviewer,
             note=request.note,
         )

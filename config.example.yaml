@@ -14,6 +14,11 @@ runtime:
   # Prefer ollama_http when the Ollama daemon is up but the CLI binary is not.
   answer_adapter: ollama_http
   ingestion_adapter: mock
+  # Review-gated LLM chunking: set ingestion_adapter to "llm". Mock stays default.
+  # ingestion_model_adapter: ollama_http   # or ollama_cli | kiro_cli | claude_cli | codex_cli | google_cli | grok_cli | hoglah | mock
+  # ingestion_model: gemma3:1b
+  # ingestion_fallback_to_mock: true
+  # ingestion_max_source_chars: 24000
   embedding_adapter: mock
   # HTTP-backed embedding adapters are not compliant for ingestion/retrieval memory operations.
   allow_http_ingestion_adapters: false
@@ -69,6 +74,40 @@ runtime:
   #   ollama_executable: /mnt/c/Users/<you>/AppData/Local/Programs/Ollama/ollama.exe
   ollama_executable: ollama
   ollama_timeout_seconds: 180
+  # Optional Kiro CLI backend for answers and LLM ingestion.
+  # Requires kiro-cli on PATH and KIRO_API_KEY or `kiro-cli login`.
+  # kiro_executable: kiro-cli
+  # kiro_timeout_seconds: 180
+  # kiro_model:
+  # kiro_agent:
+  # kiro_effort:
+  # kiro_trust_tools: ""
+  # Optional Claude Code CLI (`claude -p`). Auth: ANTHROPIC_API_KEY or `claude` login.
+  # claude_executable: claude
+  # claude_timeout_seconds: 180
+  # claude_model:
+  # claude_max_turns: 1
+  # claude_bare: true
+  # Optional Codex CLI (`codex exec`). Auth: OPENAI_API_KEY or `codex login`.
+  # codex_executable: codex
+  # codex_timeout_seconds: 180
+  # codex_model:
+  # codex_sandbox: read-only
+  # codex_ephemeral: true
+  # Prefix sudo -n -E when the Linux sandbox needs elevation (NOPASSWD required).
+  # codex_sudo: false
+  # Optional Google Gemini CLI (`gemini -p`; adapter google_cli or gemini_cli).
+  # Auth: GEMINI_API_KEY or `gemini` login.
+  # google_executable: gemini
+  # google_timeout_seconds: 180
+  # google_model:
+  # Optional Grok Build CLI (`grok --prompt-file`). Auth: XAI_API_KEY or `grok` login.
+  # grok_executable: grok
+  # grok_timeout_seconds: 180
+  # grok_model:
+  # grok_max_turns: 3
+  # grok_no_auto_update: true
+  # grok_disallowed_tools: run_terminal_cmd,search_replace,web_search,web_fetch,read_file,list_dir,grep
   # Optional Hoglah queue integration for answers AND embeddings. Install with
   # `pip install "tirzah[hoglah]"` and set answer_adapter / embedding_adapter to
   # "hoglah". Decoupled topology: Tirzah is a pure submitter into the shared

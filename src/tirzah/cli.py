@@ -45,8 +45,11 @@ from tirzah.db.repositories import (
     document_tree,
     graph_edge_status,
     label_definitions,
+    list_proposed_ingestion_trees,
     list_semantic_edge_candidates,
+    promote_ingestion_tree,
     rebuild_document,
+    reject_ingestion_tree,
     review_semantic_edge_candidate,
 )
 from tirzah.db.queue import enqueue_source, queue_summary, recent_jobs
@@ -109,7 +112,13 @@ INIT_RUNTIME_CHOICES = {
     "3": "ollama_http",
     "4": "local_command",
     "5": "hoglah",
+    "6": "kiro_cli",
+    "7": "claude_cli",
+    "8": "codex_cli",
+    "9": "google_cli",
+    "10": "grok_cli",
 }
+EXTERNAL_CLI_RUNTIMES = {"kiro_cli", "claude_cli", "codex_cli", "google_cli", "grok_cli"}
 
 
 def discover_folder_sources(root: Path) -> list[Path]:
@@ -640,6 +649,11 @@ def init_config_payload(
         config.runtime.memory_agent_adapter = None
         config.runtime.embedding_adapter = "mock"
         config.runtime.hoglah_ollama_host = "http://host.docker.internal:11434" if docker else "http://localhost:11434"
+    elif runtime_choice in EXTERNAL_CLI_RUNTIMES:
+        config.runtime.answer_adapter = runtime_choice
+        config.runtime.memory_agent_adapter = None
+        config.runtime.embedding_adapter = "mock"
+        config.runtime.ingestion_model_adapter = runtime_choice
     elif runtime_choice == "local_command":
         config.runtime.answer_adapter = "mock"
         config.runtime.memory_agent_adapter = "mock"
@@ -663,7 +677,12 @@ def interactive_runtime_choice(default: str = "mock") -> str:
     print("  3. ollama_http - call an existing Ollama HTTP server")
     print("  4. local_command - mock answers plus local profile helper")
     print("  5. hoglah - queue answers through the optional Hoglah package")
-    answer = input(f"Runtime [1-5, default {runtime_choice_label(default)}]: ").strip()
+    print("  6. kiro_cli - call headless Kiro CLI (optional; not local-only)")
+    print("  7. claude_cli - call headless Claude Code (`claude -p`)")
+    print("  8. codex_cli - call headless Codex CLI (`codex exec`)")
+    print("  9. google_cli - call headless Gemini CLI (`gemini -p`)")
+    print(" 10. grok_cli - call headless Grok CLI (`grok --prompt-file`)")
+    answer = input(f"Runtime [1-10, default {runtime_choice_label(default)}]: ").strip()
     if not answer:
         return default
     return INIT_RUNTIME_CHOICES.get(answer, default)
@@ -747,7 +766,18 @@ def main() -> None:
     init.add_argument("--non-interactive", action="store_true")
     init.add_argument(
         "--runtime",
-        choices=["mock", "ollama_cli", "ollama_http", "local_command", "hoglah"],
+        choices=[
+            "mock",
+            "ollama_cli",
+            "ollama_http",
+            "local_command",
+            "hoglah",
+            "kiro_cli",
+            "claude_cli",
+            "codex_cli",
+            "google_cli",
+            "grok_cli",
+        ],
         default=None,
         help="Runtime defaults to write. Interactive mode prompts when omitted.",
     )
@@ -903,6 +933,35 @@ def main() -> None:
     endorse_node.add_argument("--endorsement", required=True, choices=sorted(ENDORSEMENT_LABELS))
     endorse_node.add_argument("--reviewer", default="user")
     endorse_node.add_argument("--note", default=None)
+
+    list_proposed = _add_cmd(
+        subcommands,
+        "list-proposed-ingestions",
+        help="List LLM-proposed ingestion trees waiting for review.",
+    )
+    list_proposed.add_argument("--limit", type=int, default=20)
+    promote_ingestion = _add_cmd(
+        subcommands,
+        "promote-ingestion",
+        help="Promote a pending LLM-proposed tree so retrieval can use it.",
+    )
+    promote_ingestion.add_argument("identifier", help="Tree id or document id.")
+    promote_ingestion.add_argument("--reviewer", default="user")
+    promote_ingestion.add_argument("--note", default=None)
+    promote_ingestion.add_argument(
+        "--endorsement",
+        default=None,
+        choices=sorted(ENDORSEMENT_LABELS),
+        help="Optional endorsement to stamp on the promoted nodes.",
+    )
+    reject_ingestion = _add_cmd(
+        subcommands,
+        "reject-ingestion",
+        help="Reject a pending LLM-proposed tree (excluded from retrieval).",
+    )
+    reject_ingestion.add_argument("identifier", help="Tree id or document id.")
+    reject_ingestion.add_argument("--reviewer", default="user")
+    reject_ingestion.add_argument("--note", default=None)
 
     create_session_cmd = _add_cmd(subcommands, "create-session")
     create_session_cmd.add_argument("--title", default=None)
@@ -1680,6 +1739,50 @@ def main() -> None:
                     "ok": True,
                     "nodes": nodes,
                 },
+                indent=2,
+            )
+        )
+        return
+
+    if args.command == "list-proposed-ingestions":
+        ensure_indexes(db)
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "trees": list_proposed_ingestion_trees(db, limit=args.limit),
+                },
+                indent=2,
+            )
+        )
+        return
+
+    if args.command == "promote-ingestion":
+        ensure_indexes(db)
+        print(
+            json.dumps(
+                promote_ingestion_tree(
+                    db,
+                    args.identifier,
+                    reviewer=args.reviewer,
+                    note=args.note,
+                    endorsement_label=args.endorsement,
+                ),
+                indent=2,
+            )
+        )
+        return
+
+    if args.command == "reject-ingestion":
+        ensure_indexes(db)
+        print(
+            json.dumps(
+                reject_ingestion_tree(
+                    db,
+                    args.identifier,
+                    reviewer=args.reviewer,
+                    note=args.note,
+                ),
                 indent=2,
             )
         )

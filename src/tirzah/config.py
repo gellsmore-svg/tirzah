@@ -33,6 +33,13 @@ class RuntimeConfig(_StrictModel):
     # Prefer HTTP: the CLI binary is often missing even when Ollama is up (F6).
     answer_adapter: str = "ollama_http"
     ingestion_adapter: str = "mock"
+    # Model used by `ingestion_adapter: llm`. Empty = follow answer_adapter
+    # when that is a generator (ollama_*/hoglah/mock or an external CLI),
+    # otherwise ollama_http.
+    ingestion_model_adapter: str = ""
+    ingestion_model: str | None = None
+    ingestion_fallback_to_mock: bool = True
+    ingestion_max_source_chars: int = Field(default=24000, ge=500, le=200_000)
     embedding_adapter: str = "mock"
     allow_http_ingestion_adapters: bool = False
     embedding_model: str = "nomic-embed-text:latest"
@@ -96,6 +103,44 @@ class RuntimeConfig(_StrictModel):
     # non-PATH install (e.g. a WSL-mounted ollama.exe).
     ollama_executable: Path = Path("ollama")
     ollama_timeout_seconds: int = 180
+    # Optional Kiro CLI answer/ingestion backend (`kiro-cli chat --no-interactive`).
+    # Cloud-backed; keep answer_adapter/ingestion_model_adapter on ollama_* for local-only.
+    kiro_executable: Path = Path("kiro-cli")
+    kiro_timeout_seconds: int = Field(default=180, ge=5, le=3600)
+    kiro_model: str | None = None
+    kiro_agent: str | None = None
+    kiro_effort: str | None = None
+    kiro_trust_tools: str = ""
+    # Optional Claude Code CLI (`claude -p`). Cloud-backed.
+    claude_executable: Path = Path("claude")
+    claude_timeout_seconds: int = Field(default=180, ge=5, le=3600)
+    claude_model: str | None = None
+    claude_max_turns: int = Field(default=1, ge=1, le=20)
+    claude_bare: bool = True
+    # Optional Codex CLI (`codex exec`). Cloud-backed.
+    codex_executable: Path = Path("codex")
+    codex_timeout_seconds: int = Field(default=180, ge=5, le=3600)
+    codex_model: str | None = None
+    codex_sandbox: str = "read-only"
+    codex_ephemeral: bool = True
+    # Prefix `sudo -n -E --` so Linux sandbox helpers can run elevated.
+    # Requires passwordless sudo (`sudo -n`); leave false when a TTY password
+    # prompt would hang headless runs.
+    codex_sudo: bool = False
+    # Optional Google Gemini CLI (`gemini -p`). Cloud-backed. Alias: gemini_cli.
+    google_executable: Path = Path("gemini")
+    google_timeout_seconds: int = Field(default=180, ge=5, le=3600)
+    google_model: str | None = None
+    # Optional Grok Build CLI (`grok --prompt-file`). Cloud-backed.
+    grok_executable: Path = Path("grok")
+    grok_timeout_seconds: int = Field(default=180, ge=5, le=3600)
+    grok_model: str | None = None
+    grok_max_turns: int = Field(default=3, ge=1, le=20)
+    grok_no_auto_update: bool = True
+    grok_sandbox: str = ""
+    grok_disallowed_tools: str = (
+        "run_terminal_cmd,search_replace,web_search,web_fetch,read_file,list_dir,grep"
+    )
     # Context window for the HTTP adapter. Must be large enough to hold the
     # conversation history + retrieved context, or Ollama silently truncates the
     # start of the prompt (dropping history). 0 = leave Ollama's default.
@@ -199,6 +244,14 @@ _ENV_OVERRIDES: dict[str, tuple[str, str]] = {
     "TIRZAH_MONGO_DB": ("mongo", "database"),
     "OLLAMA_BASE_URL": ("runtime", "ollama_base_url"),
     "OLLAMA_EXECUTABLE": ("runtime", "ollama_executable"),
+    "KIRO_EXECUTABLE": ("runtime", "kiro_executable"),
+    "CLAUDE_EXECUTABLE": ("runtime", "claude_executable"),
+    "CODEX_EXECUTABLE": ("runtime", "codex_executable"),
+    "GEMINI_EXECUTABLE": ("runtime", "google_executable"),
+    "GOOGLE_CLI_EXECUTABLE": ("runtime", "google_executable"),
+    "GROK_EXECUTABLE": ("runtime", "grok_executable"),
+    "TIRZAH_INGESTION_ADAPTER": ("runtime", "ingestion_adapter"),
+    "TIRZAH_INGESTION_MODEL_ADAPTER": ("runtime", "ingestion_model_adapter"),
     "TIRZAH_WEB_RESEARCH_ENABLED": ("runtime", "web_research_enabled"),
     "TIRZAH_RECURSIVE_PLANNING_ENABLED": ("runtime", "recursive_planning_enabled"),
     "TIRZAH_PLAN_INTERPRETIVE_EXECUTION_ENABLED": ("runtime", "plan_interpretive_execution_enabled"),

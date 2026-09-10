@@ -1817,6 +1817,54 @@ def test_endorse_node_endpoint(monkeypatch) -> None:
     }
 
 
+def test_proposed_ingestion_review_endpoints(monkeypatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(
+        "tirzah.web.app.list_proposed_ingestion_trees",
+        lambda _db, limit=20: [{"tree_id": "tree1", "limit": limit}],
+    )
+    monkeypatch.setattr(
+        "tirzah.web.app.promote_ingestion_tree",
+        lambda _db, identifier, reviewer="user", note=None, endorsement_label=None: {
+            "ok": True,
+            "tree_id": identifier,
+            "reviewer": reviewer,
+            "note": note,
+            "endorsement_label": endorsement_label,
+            "status": "active",
+        },
+    )
+    monkeypatch.setattr(
+        "tirzah.web.app.reject_ingestion_tree",
+        lambda _db, identifier, reviewer="user", note=None: {
+            "ok": True,
+            "tree_id": identifier,
+            "reviewer": reviewer,
+            "note": note,
+            "status": "rejected",
+        },
+    )
+
+    listed = client.get("/api/review/proposed-ingestions", params={"limit": 3})
+    assert listed.status_code == 200
+    assert listed.json()["trees"] == [{"tree_id": "tree1", "limit": 3}]
+
+    promoted = client.post(
+        "/api/review/promote-ingestion",
+        json={"identifier": "tree1", "reviewer": "tester", "endorsement": "explicit_endorsed"},
+    )
+    assert promoted.status_code == 200
+    assert promoted.json()["status"] == "active"
+    assert promoted.json()["endorsement_label"] == "explicit_endorsed"
+
+    rejected = client.post(
+        "/api/review/reject-ingestion",
+        json={"identifier": "tree1", "note": "bad chunks"},
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "rejected"
+
+
 def test_semantic_edge_candidates_endpoint(monkeypatch) -> None:
     client = TestClient(app)
 
@@ -2427,6 +2475,8 @@ def simple_match(row, query):
             if "$exists" in expected and (actual is not None) is not expected["$exists"]:
                 return False
             if "$ne" in expected and actual == expected["$ne"]:
+                return False
+            if "$nin" in expected and actual in expected["$nin"]:
                 return False
             continue
         if isinstance(actual, list):

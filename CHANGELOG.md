@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **LLM-assisted ingestion (review-gated):** `runtime.ingestion_adapter: llm`
+  proposes `source_root` / `source_section` / `source_chunk` trees via a model
+  while keeping the mock adapter as the default. Proposed trees commit as
+  `ingestion_kind: llm_proposed` with `status: pending_review` and are excluded
+  from retrieval until `tirzah promote-ingestion` (or the matching web review
+  endpoints). Chunk text must be verbatim source; invalid or failed proposals
+  fall back to the deterministic mock tree (`ingestion_fallback_to_mock`,
+  default true).
+- **External CLI answer adapters:** `kiro_cli`, `claude_cli` (`claude -p`),
+  `codex_cli` (`codex exec`), `google_cli` / `gemini_cli` (`gemini -p`), and
+  `grok_cli` (`grok --prompt-file`). Each is usable for `ask`/`chat` and as
+  `ingestion_model_adapter` for review-gated LLM ingestion. Local Ollama
+  remains the default generator. `tirzah init --runtime {kiro_cli,claude_cli,
+  codex_cli,google_cli,grok_cli}` writes those defaults. Auth stays in the
+  environment (`KIRO_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+  `GEMINI_API_KEY`, `XAI_API_KEY`) or each CLI's login. Codex may prefix
+  `sudo -n -E` (`runtime.codex_sudo`, or automatic retry on sandbox
+  EPERM) when the Linux sandbox needs elevation.
+
 ## [1.16.2] — 2026-08-08
 
 ### Fixed

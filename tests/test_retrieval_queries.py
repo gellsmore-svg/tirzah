@@ -303,6 +303,36 @@ def test_search_nodes_ignores_superseded_nodes() -> None:
     assert [result["title"] for result in results] == ["Active memory"]
 
 
+def test_search_nodes_ignores_pending_review_nodes() -> None:
+    document_id = ObjectId()
+    db = FakeDb(
+        [
+            {
+                "_id": ObjectId(),
+                "document_id": document_id,
+                "tree_id": ObjectId(),
+                "title": "Proposed memory",
+                "text": "memory",
+                "labels": ["source_chunk"],
+                "status": "pending_review",
+            },
+            {
+                "_id": ObjectId(),
+                "document_id": document_id,
+                "tree_id": ObjectId(),
+                "title": "Active memory",
+                "text": "memory",
+                "labels": ["source_chunk"],
+                "status": "active",
+            },
+        ]
+    )
+
+    results = search_nodes(db)
+
+    assert [result["title"] for result in results] == ["Active memory"]
+
+
 class FakeCursor(list):
     def sort(self, *_args):
         return self
@@ -349,6 +379,8 @@ def matches(row, query):
             if "$exists" in expected and (value is not None) is not expected["$exists"]:
                 return False
             if "$ne" in expected and value == expected["$ne"]:
+                return False
+            if "$nin" in expected and value in expected["$nin"]:
                 return False
             if "$in" in expected:
                 if isinstance(value, list):

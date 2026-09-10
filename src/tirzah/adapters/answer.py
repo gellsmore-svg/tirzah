@@ -237,7 +237,54 @@ def answer_adapter(config: RuntimeConfig):
         return OllamaHttpAnswerAdapter(config)
     if config.answer_adapter == "hoglah":
         return HoglahAnswerAdapter(config)
+    if config.answer_adapter == "kiro_cli":
+        from tirzah.adapters.kiro import KiroCliAnswerAdapter
+
+        return KiroCliAnswerAdapter(config)
+    if config.answer_adapter == "claude_cli":
+        from tirzah.adapters.claude import ClaudeCliAnswerAdapter
+
+        return ClaudeCliAnswerAdapter(config)
+    if config.answer_adapter == "codex_cli":
+        from tirzah.adapters.codex import CodexCliAnswerAdapter
+
+        return CodexCliAnswerAdapter(config)
+    if config.answer_adapter in {"google_cli", "gemini_cli"}:
+        from tirzah.adapters.google import GoogleCliAnswerAdapter
+
+        return GoogleCliAnswerAdapter(config)
+    if config.answer_adapter == "grok_cli":
+        from tirzah.adapters.grok import GrokCliAnswerAdapter
+
+        return GrokCliAnswerAdapter(config)
     raise ValueError(f"Unknown answer adapter: {config.answer_adapter}")
+
+
+def generate_text(
+    config: RuntimeConfig,
+    prompt_text: str,
+    *,
+    adapter_name: str | None = None,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Run a prompt through an answer adapter and return the payload dict."""
+    updates: dict[str, Any] = {}
+    if adapter_name:
+        updates["answer_adapter"] = adapter_name
+    if model:
+        from tirzah.adapters.cli_runtime import EXTERNAL_MODEL_FIELDS
+
+        chosen = adapter_name or config.answer_adapter
+        field = EXTERNAL_MODEL_FIELDS.get(chosen, "ollama_model")
+        updates[field] = model
+    runtime = config.model_copy(update=updates) if updates else config
+    adapter = answer_adapter(runtime)
+    try:
+        return adapter.answer({"prompt_text": prompt_text, "context_metadata": {"included": []}})
+    finally:
+        close = getattr(adapter, "close", None)
+        if callable(close):
+            close()
 
 
 def ollama_cli_command(config: RuntimeConfig, include_optional_flags: bool = True) -> list[str]:
@@ -312,7 +359,11 @@ def answer_payload(
     included = prompt.get("context_metadata", {}).get("included", [])
     if confidence is None:
         confidence = (
-            "model" if adapter.startswith("ollama") or adapter == "hoglah" else "mock"
+            "model"
+            if adapter.startswith("ollama")
+            or adapter
+            in {"hoglah", "kiro_cli", "claude_cli", "codex_cli", "google_cli", "gemini_cli", "grok_cli"}
+            else "mock"
         )
     payload: dict[str, Any] = {
         "adapter": adapter,

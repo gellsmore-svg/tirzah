@@ -8,6 +8,17 @@ from pydantic import BaseModel, Field
 
 SCHEMA_VERSION = 1
 DEFAULT_ENDORSEMENT_LABEL = "unreviewed"
+INGESTION_KIND_DETERMINISTIC = "deterministic"
+INGESTION_KIND_LLM_PROPOSED = "llm_proposed"
+TREE_STATUS_ACTIVE = "active"
+TREE_STATUS_PENDING_REVIEW = "pending_review"
+TREE_STATUS_REJECTED = "rejected"
+TREE_STATUS_SUPERSEDED = "superseded"
+INACTIVE_RETRIEVAL_STATUSES = (
+    TREE_STATUS_SUPERSEDED,
+    TREE_STATUS_PENDING_REVIEW,
+    TREE_STATUS_REJECTED,
+)
 
 
 def utc_now() -> datetime:
@@ -55,6 +66,8 @@ class IngestionResult(BaseModel):
     tree_label: str = "source"
     nodes: list[IngestedNode]
     adapter: str = "mock"
+    ingestion_kind: str = INGESTION_KIND_DETERMINISTIC
+    tree_status: str = TREE_STATUS_ACTIVE
     ingestion_epoch: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -75,7 +88,9 @@ class TreeRecord(BaseModel):
     label: str
     kind: str = "source_document"
     ingestion_epoch: str
-    status: str = "active"
+    status: str = TREE_STATUS_ACTIVE
+    ingestion_kind: str = INGESTION_KIND_DETERMINISTIC
+    adapter: str = "mock"
     created_at: datetime
     updated_at: datetime
 

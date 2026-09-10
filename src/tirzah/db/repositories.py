@@ -4,13 +4,18 @@ from datetime import datetime, timezone
 from typing import Any
 
 from bson import ObjectId
+from bson.errors import InvalidId
 from pymongo.database import Database
 
 from tirzah.db.schema import collection_available
 from tirzah.adapters.embedding import default_embedding_adapter
 from tirzah.models.ingestion import (
     DEFAULT_ENDORSEMENT_LABEL,
+    INGESTION_KIND_DETERMINISTIC,
     SCHEMA_VERSION,
+    TREE_STATUS_ACTIVE,
+    TREE_STATUS_PENDING_REVIEW,
+    TREE_STATUS_REJECTED,
     DocumentRecord,
     IngestionResult,
     NodeRecord,
@@ -171,10 +176,14 @@ def insert_tree_nodes(
 ) -> dict[str, Any]:
     ingestion_epoch = ingestion_epoch or resolved_ingestion_epoch(result)
     embedder = embedder or default_embedding_adapter()
+    tree_status = result.tree_status or TREE_STATUS_ACTIVE
     tree = TreeRecord(
         document_id=document_id,
         label=result.tree_label,
         ingestion_epoch=ingestion_epoch,
+        status=tree_status,
+        ingestion_kind=result.ingestion_kind or INGESTION_KIND_DETERMINISTIC,
+        adapter=result.adapter,
         created_at=result.created_at,
         updated_at=result.created_at,
     )
@@ -206,6 +215,7 @@ def insert_tree_nodes(
             usage_score=node.usage_score,
             continuity_critical=node.continuity_critical,
             ingestion_epoch=ingestion_epoch,
+            status=tree_status,
             provenance=Provenance(
                 source_path=result.source.path,
                 source_checksum_sha256=result.source.checksum_sha256,
@@ -235,11 +245,162 @@ def insert_tree_nodes(
         "tree_id": str(tree_id),
         "node_ids": [str(node_id) for node_id in node_ids],
         "ingestion_epoch": ingestion_epoch,
+        "tree_status": tree_status,
+        "ingestion_kind": result.ingestion_kind or INGESTION_KIND_DETERMINISTIC,
         "embedded_node_count": embedded_node_count,
         "embedding_adapter": embedder.name,
         "embedding_model": embedder.model,
         "embedding_dimensions": getattr(embedder, "dimensions", None),
         **edge_result,
+    }
+
+
+def list_proposed_ingestion_trees(db: Database, limit: int = 20) -> list[dict[str, Any]]:
+    cursor = db.trees.find({"status": TREE_STATUS_PENDING_REVIEW})
+    if hasattr(cursor, "sort"):
+        cursor = cursor.sort("created_at", -1)
+    if hasattr(cursor, "limit"):
+        cursor = cursor.limit(max(1, min(100, int(limit))))
+    trees = list(cursor)
+    rows = []
+    for tree in trees:
+        document = db.documents.find_one({"_id": tree.get("document_id")}) or {}
+        node_count = db.nodes.count_documents({"tree_id": tree["_id"]})
+        rows.append(serialize_proposed_ingestion_tree(tree, document, node_count))
+    return rows
+
+
+def promote_ingestion_tree(
+    db: Database,
+    identifier: str,
+    *,
+    reviewer: str = "user",
+    note: str | None = None,
+    endorsement_label: str | None = None,
+) -> dict[str, Any]:
+    return set_ingestion_tree_review_status(
+        db,
+        identifier,
+        TREE_STATUS_ACTIVE,
+        reviewer=reviewer,
+        note=note,
+        endorsement_label=endorsement_label,
+        require_pending=True,
+    )
+
+
+def reject_ingestion_tree(
+    db: Database,
+    identifier: str,
+    *,
+    reviewer: str = "user",
+    note: str | None = None,
+) -> dict[str, Any]:
+    return set_ingestion_tree_review_status(
+        db,
+        identifier,
+        TREE_STATUS_REJECTED,
+        reviewer=reviewer,
+        note=note,
+        require_pending=True,
+    )
+
+
+def set_ingestion_tree_review_status(
+    db: Database,
+    identifier: str,
+    status: str,
+    *,
+    reviewer: str = "user",
+    note: str | None = None,
+    endorsement_label: str | None = None,
+    require_pending: bool = True,
+) -> dict[str, Any]:
+    tree = find_ingestion_tree(db, identifier)
+    if tree is None:
+        return {"ok": False, "reason": "tree_not_found", "identifier": identifier}
+    current = tree.get("status") or TREE_STATUS_ACTIVE
+    if current == status:
+        document = db.documents.find_one({"_id": tree.get("document_id")}) or {}
+        node_count = db.nodes.count_documents({"tree_id": tree["_id"]})
+        return {
+            "ok": True,
+            "already": True,
+            "status": status,
+            **serialize_proposed_ingestion_tree(tree, document, node_count),
+        }
+    if require_pending and current != TREE_STATUS_PENDING_REVIEW:
+        return {
+            "ok": False,
+            "reason": "not_pending_review",
+            "tree_id": str(tree["_id"]),
+            "status": current,
+        }
+    now = datetime.now(timezone.utc)
+    review = {
+        "status": status,
+        "reviewer": reviewer,
+        "note": note,
+        "reviewed_at": now,
+    }
+    tree_fields: dict[str, Any] = {
+        "status": status,
+        "updated_at": now,
+        "metadata.review": review,
+    }
+    db.trees.update_one({"_id": tree["_id"]}, {"$set": tree_fields})
+    node_fields: dict[str, Any] = {"status": status, "updated_at": now}
+    if endorsement_label:
+        node_fields["endorsement_label"] = endorsement_label
+        node_fields["provenance.endorsement_label"] = endorsement_label
+    db.nodes.update_many({"tree_id": tree["_id"]}, {"$set": node_fields})
+    updated = db.trees.find_one({"_id": tree["_id"]}) or {**tree, "status": status}
+    document = db.documents.find_one({"_id": tree.get("document_id")}) or {}
+    node_count = db.nodes.count_documents({"tree_id": tree["_id"]})
+    return {
+        "ok": True,
+        "already": False,
+        "status": status,
+        **serialize_proposed_ingestion_tree(updated, document, node_count),
+    }
+
+
+def find_ingestion_tree(db: Database, identifier: str) -> dict[str, Any] | None:
+    object_id = parse_tree_object_id(identifier)
+    if object_id is None:
+        return None
+    tree = db.trees.find_one({"_id": object_id})
+    if tree:
+        return tree
+    pending = list(db.trees.find({"document_id": object_id, "status": TREE_STATUS_PENDING_REVIEW}))
+    if not pending:
+        return None
+    return max(pending, key=lambda row: row.get("created_at") or datetime.min.replace(tzinfo=timezone.utc))
+
+
+def parse_tree_object_id(value: str) -> ObjectId | None:
+    try:
+        return ObjectId(value)
+    except (InvalidId, TypeError):
+        return None
+
+
+def serialize_proposed_ingestion_tree(
+    tree: dict[str, Any],
+    document: dict[str, Any],
+    node_count: int,
+) -> dict[str, Any]:
+    created_at = tree.get("created_at")
+    return {
+        "tree_id": str(tree.get("_id")),
+        "document_id": str(tree.get("document_id")),
+        "title": document.get("title"),
+        "ingestion_kind": tree.get("ingestion_kind"),
+        "ingestion_epoch": tree.get("ingestion_epoch"),
+        "adapter": tree.get("adapter"),
+        "status": tree.get("status"),
+        "node_count": node_count,
+        "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
     }
 
 

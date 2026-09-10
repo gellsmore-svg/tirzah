@@ -446,6 +446,8 @@ def matches(row, query):
         if isinstance(value, dict):
             if "$ne" in value and row_value == value["$ne"]:
                 return False
+            if "$nin" in value and row_value in value["$nin"]:
+                return False
             if "$exists" in value and (row_value is not None) != bool(value["$exists"]):
                 return False
             if "$gt" in value and not row_value > value["$gt"]:

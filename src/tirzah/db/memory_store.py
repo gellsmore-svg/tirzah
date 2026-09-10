@@ -6,6 +6,7 @@ from typing import Any
 from pymongo.database import Database
 
 from tirzah.db.schema import collection_available
+from tirzah.models.ingestion import INACTIVE_RETRIEVAL_STATUSES
 
 
 class MemoryStore:
@@ -30,12 +31,12 @@ class MemoryStore:
 
     def active_tree_count(self, document_id: object) -> int:
         return self.db.trees.count_documents(
-            {"document_id": document_id, "status": {"$ne": "superseded"}}
+            {"document_id": document_id, "status": {"$nin": list(INACTIVE_RETRIEVAL_STATUSES)}}
         )
 
     def active_node_count(self, document_id: object) -> int:
         return self.db.nodes.count_documents(
-            {"document_id": document_id, "status": {"$ne": "superseded"}}
+            {"document_id": document_id, "status": {"$nin": list(INACTIVE_RETRIEVAL_STATUSES)}}
         )
 
     def get_node(self, node_id: object) -> dict[str, Any] | None:

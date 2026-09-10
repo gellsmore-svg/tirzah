@@ -10,6 +10,7 @@ from bson.errors import InvalidId
 from pymongo.database import Database
 
 from tirzah.db.memory_store import MemoryStore, as_memory_store
+from tirzah.models.ingestion import INACTIVE_RETRIEVAL_STATUSES
 
 
 SEARCH_STOPWORDS = {
@@ -126,7 +127,7 @@ def node_visible_to_identity(node: dict[str, Any], identity: dict[str, Any]) -> 
 
 
 def active_node_filter() -> dict[str, Any]:
-    return {"status": {"$ne": "superseded"}}
+    return {"status": {"$nin": list(INACTIVE_RETRIEVAL_STATUSES)}}
 
 
 def is_superseded_node(node: dict[str, Any] | None) -> bool:
