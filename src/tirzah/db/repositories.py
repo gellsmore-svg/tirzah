@@ -2091,6 +2091,55 @@ def update_document_origin_date(
     }
 
 
+def update_node_summary(
+    db: Database,
+    node_id: str,
+    summary: str,
+    *,
+    reviewer: str = "user",
+    note: str | None = None,
+    source: str = "operator",
+) -> dict[str, Any]:
+    object_id = parse_tree_object_id(node_id)
+    if object_id is None:
+        return {"ok": False, "reason": "invalid_node_id", "node_id": node_id}
+    node = db.nodes.find_one({"_id": object_id})
+    if not node:
+        return {"ok": False, "reason": "node_not_found", "node_id": node_id}
+    now = datetime.now(timezone.utc)
+    cleaned = " ".join(str(summary or "").split()).strip()
+    if not cleaned:
+        return {"ok": False, "reason": "empty_summary", "node_id": node_id}
+    history = list((node.get("summary_provenance") or {}).get("history") or [])
+    previous = {
+        "summary": node.get("summary"),
+        "source": (node.get("summary_provenance") or {}).get("source"),
+        "replaced_at": now,
+        "reviewer": reviewer,
+        "note": note,
+    }
+    if node.get("summary"):
+        history.append(previous)
+    provenance = {
+        "source": source,
+        "reviewer": reviewer,
+        "note": note,
+        "updated_at": now,
+        "history": history,
+    }
+    db.nodes.update_one(
+        {"_id": object_id},
+        {"$set": {"summary": cleaned, "summary_provenance": provenance, "updated_at": now}},
+    )
+    updated = db.nodes.find_one({"_id": object_id}) or node
+    return {
+        "ok": True,
+        "node_id": str(object_id),
+        "summary": updated.get("summary"),
+        "summary_provenance": updated.get("summary_provenance"),
+    }
+
+
 def document_tree(db: Database, document_id: str) -> list[dict]:
     from bson import ObjectId
 

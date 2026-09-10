@@ -67,6 +67,7 @@ from tirzah.db.repositories import (
     reject_ingestion_tree,
     review_semantic_edge_candidate,
     update_document_origin_date,
+    update_node_summary,
 )
 from tirzah.db.queue import enqueue_source, queue_summary, recent_jobs
 from tirzah.ingestion.embedding_backfill import (
@@ -200,6 +201,12 @@ class RebuildDocumentRequest(BaseModel):
 
 class SetOriginDateRequest(BaseModel):
     origin_date: str
+    reviewer: str = "user"
+    note: str | None = None
+
+
+class SetNodeSummaryRequest(BaseModel):
+    summary: str
     reviewer: str = "user"
     note: str | None = None
 
@@ -915,6 +922,16 @@ def create_app() -> FastAPI:
             db,
             document_id,
             request.origin_date,
+            reviewer=request.reviewer,
+            note=request.note,
+        )
+
+    @app.post("/api/nodes/{node_id}/summary")
+    def set_node_summary_endpoint(node_id: str, request: SetNodeSummaryRequest) -> dict[str, Any]:
+        return update_node_summary(
+            db,
+            node_id,
+            request.summary,
             reviewer=request.reviewer,
             note=request.note,
         )

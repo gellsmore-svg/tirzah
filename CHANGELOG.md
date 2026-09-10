@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Budget skip summaries:** when `render_context_document` omits records for
+  char budget, it appends a provenance-tagged skip appendix using stored node
+  summaries or a derived extractive fallback. `set-node-summary` /
+  `POST /api/nodes/{id}/summary` let operators edit summaries with history.
 - **Hybrid lexical + vector search:** `search_nodes` unions lexical hits with
   embedding-similar nodes (Mongo `$vectorSearch` when `vector_search_index` is
   set, otherwise a bounded cosine scan). Results expose `hybrid_score`,

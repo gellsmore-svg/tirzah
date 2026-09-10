@@ -21,6 +21,7 @@ from tirzah.db.repositories import (
     semantic_edge_candidate_pair_key,
     summarize_node_text,
     update_document_origin_date,
+    update_node_summary,
 )
 from tirzah.models.ingestion import IngestedNode, IngestionResult, SourceRef
 
@@ -193,6 +194,26 @@ def test_update_document_origin_date_stamps_active_nodes_with_history() -> None:
     assert source["origin_date_history"][0]["origin_date"] == "2020-01-01"
     assert db.nodes.rows[0]["origin_date"] == "2021-02-03"
     assert db.nodes.rows[0]["origin_date_source"] == "operator"
+
+
+def test_update_node_summary_records_provenance_history() -> None:
+    db = FakeDb()
+    result = IngestionResult(
+        source=SourceRef(path="source.md", kind="markdown", checksum_sha256="checksum"),
+        title="Source",
+        summary="Summary",
+        nodes=[IngestedNode(node_key="root", title="Root", text="Root text", summary="old summary")],
+        created_at=datetime(2026, 5, 30, 12, tzinfo=timezone.utc),
+    )
+    inserted = commit_ingestion(db, result)
+    node_id = inserted["node_ids"][0]
+    updated = update_node_summary(
+        db, node_id, "A vorton is a closed loop.", reviewer="tester", note="hand summary"
+    )
+    assert updated["ok"] is True
+    assert updated["summary"] == "A vorton is a closed loop."
+    assert updated["summary_provenance"]["source"] == "operator"
+    assert updated["summary_provenance"]["history"][0]["summary"] == "old summary"
 
 
 def test_commit_ingestion_annotates_nodes_with_embedding_metadata() -> None:

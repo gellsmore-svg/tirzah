@@ -1403,19 +1403,12 @@ def render_context_document(
     parts = ["\n".join(header)]
     used_chars = len(parts[0])
     included = []
-    skipped = []
+    skipped_records: list[dict[str, Any]] = []
 
     for record in prioritize_records(context.get("records", [])):
         block = render_record(record)
         if used_chars + len(block) > char_budget:
-            skipped.append(
-                {
-                    "node_id": record["node_id"],
-                    "role": record["role"],
-                    "reason": "char_budget_exceeded",
-                    "chars": len(block),
-                }
-            )
+            skipped_records.append(record)
             continue
         parts.append(block)
         used_chars += len(block)
@@ -1427,6 +1420,11 @@ def render_context_document(
                 "chars": len(block),
             }
         )
+
+    skipped, appendix = render_skip_summaries(skipped_records, remaining=char_budget - used_chars)
+    if appendix:
+        parts.append(appendix)
+        used_chars += len(appendix)
 
     return {
         "text": "\n".join(parts).rstrip() + "\n",
@@ -1616,6 +1614,65 @@ def prioritize_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
+def skip_summary_for_record(record: dict[str, Any], limit: int = 280) -> tuple[str, str]:
+    stored = str(record.get("summary") or "").strip()
+    if stored:
+        provenance = record.get("summary_provenance") or {}
+        source = str(provenance.get("source") or "stored")
+        return stored[:limit], source
+    text = str(record.get("text") or record.get("text_preview") or "").strip()
+    if not text:
+        return "", "empty"
+    return " ".join(text.split())[:limit], "derived_extractive"
+
+
+def render_skip_summaries(
+    records: list[dict[str, Any]],
+    *,
+    remaining: int,
+) -> tuple[list[dict[str, Any]], str]:
+    if not records:
+        return [], ""
+    header = "## Skipped under budget\n\n"
+    skipped: list[dict[str, Any]] = []
+    lines: list[str] = []
+    used = 0
+    header_included = False
+    for record in records:
+        summary, source = skip_summary_for_record(record)
+        entry = {
+            "node_id": record.get("node_id"),
+            "role": record.get("role"),
+            "distance": record.get("distance"),
+            "reason": "char_budget_exceeded",
+            "title": record.get("title"),
+            "summary": summary or None,
+            "summary_source": source,
+            "included_as": "omitted",
+        }
+        if not summary:
+            skipped.append(entry)
+            continue
+        line = (
+            f"- {record.get('role')} d={record.get('distance')}: "
+            f"{record.get('title') or '<untitled>'} "
+            f"[{source}] {summary}\n"
+        )
+        extra = (len(header) if not header_included else 0) + len(line)
+        if remaining - used < extra:
+            skipped.append(entry)
+            continue
+        if not header_included:
+            lines.append(header)
+            used += len(header)
+            header_included = True
+        lines.append(line)
+        used += len(line)
+        entry["included_as"] = "summary"
+        skipped.append(entry)
+    return skipped, "".join(lines)
+
+
 def render_record(record: dict[str, Any]) -> str:
     labels = ", ".join(record.get("labels", [])) or "<none>"
     provenance = record.get("provenance", {})
@@ -1676,6 +1733,8 @@ def nearby_siblings(db: Database | MemoryStore, node: dict[str, Any], window: in
 def context_record(role: str, node: dict[str, Any], distance: int) -> dict[str, Any]:
     serialized = serialize_node(node)
     serialized["text"] = node.get("text", "")
+    serialized["summary"] = node.get("summary") or serialized.get("summary")
+    serialized["summary_provenance"] = node.get("summary_provenance") or serialized.get("summary_provenance")
     serialized["role"] = role
     serialized["distance"] = distance
     return serialized
@@ -1717,6 +1776,8 @@ def serialize_node(node: dict[str, Any]) -> dict[str, Any]:
         "origin_date": node.get("origin_date"),
         "origin_date_source": node.get("origin_date_source"),
         "origin_date_confidence": node.get("origin_date_confidence"),
+        "summary": node.get("summary") or None,
+        "summary_provenance": node.get("summary_provenance") or None,
         "provenance": node.get("provenance", {}),
         "created_at": iso(node.get("created_at")),
     }

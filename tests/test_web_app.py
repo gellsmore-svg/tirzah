@@ -1863,6 +1863,26 @@ def test_set_origin_date_endpoint(monkeypatch) -> None:
     assert response.json()["note"] == "fixed"
 
 
+def test_set_node_summary_endpoint(monkeypatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(
+        "tirzah.web.app.update_node_summary",
+        lambda _db, node_id, summary, reviewer="user", note=None: {
+            "ok": True,
+            "node_id": node_id,
+            "summary": summary,
+            "reviewer": reviewer,
+            "note": note,
+        },
+    )
+    response = client.post(
+        "/api/nodes/node1/summary",
+        json={"summary": "A vorton is a closed loop.", "reviewer": "tester"},
+    )
+    assert response.status_code == 200
+    assert response.json()["summary"] == "A vorton is a closed loop."
+
+
 def test_rebuild_diff_and_rebuild_document_endpoints(monkeypatch) -> None:
     client = TestClient(app)
     monkeypatch.setattr(

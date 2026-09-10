@@ -52,6 +52,7 @@ from tirzah.db.repositories import (
     reject_ingestion_tree,
     review_semantic_edge_candidate,
     update_document_origin_date,
+    update_node_summary,
 )
 from tirzah.db.queue import enqueue_source, queue_summary, recent_jobs
 from tirzah.ingestion.activity import (
@@ -1014,6 +1015,16 @@ def main() -> None:
     set_origin.add_argument("--reviewer", default="user")
     set_origin.add_argument("--note", default=None)
 
+    set_summary = _add_cmd(
+        subcommands,
+        "set-node-summary",
+        help="Set a provenance-tagged summary used when context budget skips a node.",
+    )
+    set_summary.add_argument("node_id")
+    set_summary.add_argument("--summary", required=True)
+    set_summary.add_argument("--reviewer", default="user")
+    set_summary.add_argument("--note", default=None)
+
     context = _add_cmd(subcommands, "node-context")
     context.add_argument("node_id")
     context.add_argument("--child-limit", type=int, default=20)
@@ -1900,6 +1911,22 @@ def main() -> None:
                     db,
                     args.document_id,
                     args.date,
+                    reviewer=args.reviewer,
+                    note=args.note,
+                ),
+                indent=2,
+            )
+        )
+        return
+
+    if args.command == "set-node-summary":
+        ensure_indexes(db)
+        print(
+            json.dumps(
+                update_node_summary(
+                    db,
+                    args.node_id,
+                    args.summary,
                     reviewer=args.reviewer,
                     note=args.note,
                 ),

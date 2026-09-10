@@ -1717,6 +1717,58 @@ def test_render_context_document_enforces_char_budget() -> None:
     assert rendered["skipped"][0]["node_id"] == "node2"
 
 
+def test_render_context_document_includes_skip_summaries() -> None:
+    context = {
+        "document": {"title": "Doc", "document_id": "doc1"},
+        "focus_node_id": "node1",
+        "records": [
+            {
+                "role": "focus",
+                "distance": 0,
+                "title": "A",
+                "node_id": "node1",
+                "labels": [],
+                "endorsement_label": "unreviewed",
+                "provenance": {},
+                "text_preview": "short",
+            },
+            {
+                "role": "descendant",
+                "distance": 1,
+                "title": "Stored section",
+                "node_id": "node2",
+                "labels": [],
+                "endorsement_label": "unreviewed",
+                "provenance": {},
+                "text": "x" * 1000,
+                "summary": "A vorton is a closed loop.",
+                "summary_provenance": {"source": "operator"},
+            },
+            {
+                "role": "descendant",
+                "distance": 1,
+                "title": "Derived section",
+                "node_id": "node3",
+                "labels": [],
+                "endorsement_label": "unreviewed",
+                "provenance": {},
+                "text": "Its charge is an integer linking invariant. " * 40,
+            },
+        ],
+    }
+
+    rendered = render_context_document(context, char_budget=900)
+
+    assert "Skipped under budget" in rendered["text"]
+    assert "A vorton is a closed loop." in rendered["text"]
+    by_id = {row["node_id"]: row for row in rendered["skipped"]}
+    assert by_id["node2"]["included_as"] == "summary"
+    assert by_id["node2"]["summary_source"] == "operator"
+    assert by_id["node3"]["included_as"] == "summary"
+    assert by_id["node3"]["summary_source"] == "derived_extractive"
+    assert "integer linking invariant" in (by_id["node3"]["summary"] or "")
+
+
 def test_prioritize_records_keeps_focus_before_descendants_and_ancestors() -> None:
     records = [
         {"role": "ancestor", "distance": 1, "title": "A"},

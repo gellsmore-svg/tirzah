@@ -136,7 +136,10 @@ provisioning in `ensure_indexes` (index still created outside the app).
 - Always surface the decision in the rendered context and the structured `context_document`.
 - Allow operators to pre-generate or edit summaries with full audit trail.
 
-**Priority:** High
+**Priority:** High — **implemented.** Skipped records get a `## Skipped under
+budget` appendix with stored or extractive summaries (`summary_source`,
+`included_as`). Operators can set summaries via `set-node-summary`. Remaining:
+optional model-generated summaries behind the existing adapter boundary.
 **Related:** `src/tirzah/retrieval/queries.py:render_context_document`, `compile_context`, `src/tirzah/models/ingestion.py`, activity reports.
 
 ### 2.3 Stronger Near-Match, Typo Tolerance, and Query Reformulation

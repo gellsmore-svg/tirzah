@@ -16,6 +16,8 @@ Direct access to the [retrieval module](../modules/retrieval.md):
   `--origin-before` filter on source origin dates.
 - **`set-origin-date`** — operator correction of a document origin date, stamped
   onto active nodes with provenance.
+- **`set-node-summary`** — provenance-tagged node summary used when context
+  budget skips a record.
 - **`node-context`** — a node plus its document, parent, and children.
 - **`graph-edges` / `expand-proximity` / `expand-graph-paths`** — inspect edges and
   traverse the [graph](../concepts/graph-memory.md) from a node.
