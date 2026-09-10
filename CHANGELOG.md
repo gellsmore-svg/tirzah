@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Trust ranking (opt-in):** `runtime.trust_ranking_enabled` applies a bounded
+  trust/temporal boost after lexical/hybrid order. Override the profile per
+  ask (`--trust-profile`, `/api/search?trust_profile=`) or session identity.
+  Results include `rank_before`/`rank_after` and `trust_ranking` before/after
+  scores. Default remains diagnostics-only.
 - **Model-aware prompt budgets:** `retrieval.model_profiles` overrides token
   and char budgets per model or adapter. Optional `tiktoken` extra for real
   counts (`tokenizer: tiktoken`); otherwise a configurable chars-per-token

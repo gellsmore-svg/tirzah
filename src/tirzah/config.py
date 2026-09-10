@@ -99,6 +99,12 @@ class RuntimeConfig(_StrictModel):
     near_match_max_candidates: int = Field(default=8, ge=1, le=32)
     near_match_per_term: int = Field(default=3, ge=1, le=8)
     weak_match_fallback_score: int = Field(default=5, ge=0, le=100)
+    # Opt-in: use trust/temporal diagnostics as a bounded secondary ranking signal.
+    trust_ranking_enabled: bool = False
+    trust_weighting_profile: str | None = None
+    trust_ranking_weight: float = Field(default=1.0, ge=0.0, le=2.0)
+    trust_ranking_max_boost: int = Field(default=20, ge=0, le=100)
+    trust_ranking_hybrid_weight: float = Field(default=0.15, ge=0.0, le=1.0)
     ollama_model: str = "gemma3:1b"
     memory_agent_model: str | None = None
     ollama_format: str | None = None

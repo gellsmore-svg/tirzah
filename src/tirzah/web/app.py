@@ -922,6 +922,8 @@ def create_app() -> FastAPI:
         origin_after: str | None = None,
         origin_before: str | None = None,
         limit: int = 10,
+        trust_ranking: bool = False,
+        trust_profile: str | None = None,
     ) -> dict[str, Any]:
         return {
             "ok": True,
@@ -935,6 +937,11 @@ def create_app() -> FastAPI:
                 query_embedding=build_query_embedding(config.runtime, query or None),
                 vector_search_index=config.runtime.vector_search_index or None,
                 vector_scan_limit=config.runtime.hybrid_vector_scan_limit,
+                trust_ranking_enabled=trust_ranking or config.runtime.trust_ranking_enabled,
+                trust_weighting_profile=trust_profile or config.runtime.trust_weighting_profile,
+                trust_ranking_weight=config.runtime.trust_ranking_weight,
+                trust_ranking_max_boost=config.runtime.trust_ranking_max_boost,
+                trust_ranking_hybrid_weight=config.runtime.trust_ranking_hybrid_weight,
             ),
         }
 

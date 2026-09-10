@@ -148,6 +148,68 @@ def trust_temporal_diagnostic(
     }
 
 
+def trust_ranking_boost(score: float, *, max_boost: int = 20, weight: float = 1.0) -> int:
+    delta = (bounded_float(score, default=0.5) - 0.5) * 2
+    return int(max(-max_boost, min(max_boost, round(delta * max_boost * weight))))
+
+
+def trust_ranking_unit_boost(score: float, *, weight: float = 0.15) -> float:
+    delta = (bounded_float(score, default=0.5) - 0.5) * 2
+    bound = abs(weight)
+    return round(max(-bound, min(bound, delta * bound)), 6)
+
+
+def apply_trust_ranking(
+    rows: list[dict[str, Any]],
+    *,
+    enabled: bool = False,
+    profile: dict[str, Any] | None = None,
+    weight: float = 1.0,
+    max_boost: int = 20,
+    hybrid_weight: float = 0.15,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    if not enabled or not rows:
+        return rows
+    ranked = []
+    hybrid = any(row.get("hybrid_score") is not None for row in rows)
+    for index, row in enumerate(rows):
+        updated = dict(row)
+        updated["rank_before"] = index
+        diagnostic = trust_temporal_diagnostic(updated, profile=profile, now=now)
+        if hybrid and updated.get("hybrid_score") is not None:
+            primary = float(updated["hybrid_score"])
+            boost = trust_ranking_unit_boost(diagnostic["score"], weight=hybrid_weight)
+            after = round(primary + boost, 6)
+        else:
+            primary = float(updated.get("lexical_score") or 0)
+            boost = trust_ranking_boost(diagnostic["score"], max_boost=max_boost, weight=weight)
+            after = primary + boost
+        updated["trust_ranking"] = {
+            "primary_score": primary,
+            "trust_score": diagnostic["score"],
+            "trust_boost": boost,
+            "ranking_score_before": primary,
+            "ranking_score_after": after,
+            "profile_id": (profile or {}).get("weighting_profile_id"),
+            "components": diagnostic.get("components"),
+        }
+        ranked.append(updated)
+    ranked.sort(
+        key=lambda row: (
+            float((row.get("trust_ranking") or {}).get("ranking_score_after") or 0),
+            -int(row.get("rank_before") or 0),
+        ),
+        reverse=True,
+    )
+    for index, row in enumerate(ranked):
+        row["rank_after"] = index
+        ranking = row.get("trust_ranking") or {}
+        ranking["position_delta"] = int(row.get("rank_before") or 0) - index
+        row["trust_ranking"] = ranking
+    return ranked
+
+
 def origin_or_created_timestamp(node: dict[str, Any]) -> datetime | None:
     origin = node.get("origin_date")
     if isinstance(origin, str) and origin:

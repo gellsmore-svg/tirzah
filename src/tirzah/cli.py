@@ -1004,6 +1004,16 @@ def main() -> None:
         help="Keep nodes whose origin_date is on or before this date (YYYY-MM-DD).",
     )
     search.add_argument("--limit", type=int, default=20)
+    search.add_argument(
+        "--trust-ranking",
+        action="store_true",
+        help="Apply opt-in trust/temporal ranking after lexical/hybrid order.",
+    )
+    search.add_argument(
+        "--trust-profile",
+        default=None,
+        help="Trust weighting profile id (default: runtime.trust_weighting_profile or identity).",
+    )
 
     set_origin = _add_cmd(
         subcommands,
@@ -1955,6 +1965,11 @@ def main() -> None:
                         query_embedding=build_query_embedding(config.runtime, args.query),
                         vector_search_index=config.runtime.vector_search_index or None,
                         vector_scan_limit=config.runtime.hybrid_vector_scan_limit,
+                        trust_ranking_enabled=args.trust_ranking or config.runtime.trust_ranking_enabled,
+                        trust_weighting_profile=args.trust_profile or config.runtime.trust_weighting_profile,
+                        trust_ranking_weight=config.runtime.trust_ranking_weight,
+                        trust_ranking_max_boost=config.runtime.trust_ranking_max_boost,
+                        trust_ranking_hybrid_weight=config.runtime.trust_ranking_hybrid_weight,
                     ),
                 },
                 indent=2,

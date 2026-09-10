@@ -13,7 +13,8 @@ Direct access to the [retrieval module](../modules/retrieval.md):
 
 - **`search-nodes`** — lexical (and, with embeddings,
   [hybrid](../concepts/hybrid-and-semantic.md)) node search. `--origin-after` /
-  `--origin-before` filter on source origin dates.
+  `--origin-before` filter on source origin dates. `--trust-ranking` /
+  `--trust-profile` opt into trust/temporal re-ranking.
 - **`set-origin-date`** — operator correction of a document origin date, stamped
   onto active nodes with provenance.
 - **`set-node-summary`** — provenance-tagged node summary used when context

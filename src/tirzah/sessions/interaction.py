@@ -596,7 +596,9 @@ def prepare_direct_answer_prompt(
             selected_node_source = "active_document"
     if not selected_node_id and retrieval_decision["should_search_corpus"]:
         query_embedding = build_query_embedding(config.runtime, query)
-        selected_node_id = select_focus_node(db, query, query_embedding=query_embedding)
+        selected_node_id = select_focus_node(
+            db, query, query_embedding=query_embedding, runtime_config=config.runtime
+        )
         if selected_node_id:
             selected_node_source = "corpus"
     retrieval_status = "matched_context"
@@ -1203,11 +1205,19 @@ def finish_answer_process_run(
 
 
 def select_focus_node(
-    db: Database, query: str, query_embedding: dict[str, Any] | None = None
+    db: Database,
+    query: str,
+    query_embedding: dict[str, Any] | None = None,
+    runtime_config: Any | None = None,
 ) -> str | None:
     for label in ("source_chunk", None):
         matches = ranked_focus_matches(
-            db, query, label=label, limit=5, query_embedding=query_embedding
+            db,
+            query,
+            label=label,
+            limit=5,
+            query_embedding=query_embedding,
+            runtime_config=runtime_config,
         )
         match = first_qualified_focus_match(matches)
         if match:
@@ -1440,6 +1450,7 @@ def ranked_focus_matches(
     limit: int,
     document_id: str | None = None,
     query_embedding: dict[str, Any] | None = None,
+    runtime_config: Any | None = None,
 ) -> list[dict[str, Any]]:
     cleaned_query = normalize_query_text(query)
     assembly = build_query_assembly(cleaned_query)
@@ -1492,7 +1503,7 @@ def ranked_focus_matches(
         for row in matches
     ]
     scored_matches.sort(key=lambda row: row["match_score"], reverse=True)
-    return scored_matches[:limit]
+    return finalize_trust_ranking(db, scored_matches[:limit], runtime_config=runtime_config, identity=None)
 
 
 def active_document_reference_query(query: str) -> bool:
@@ -1965,6 +1976,14 @@ def compact_node_matches(
             item["shared_label_count"] = match.get("shared_label_count", 0)
         if match.get("trust_diagnostic"):
             item["trust_diagnostic"] = match.get("trust_diagnostic")
+        ranking = match.get("trust_ranking")
+        if isinstance(ranking, dict):
+            item["trust_ranking"] = {
+                "trust_boost": ranking.get("trust_boost"),
+                "ranking_score_before": ranking.get("ranking_score_before"),
+                "ranking_score_after": ranking.get("ranking_score_after"),
+                "position_delta": ranking.get("position_delta"),
+            }
         compact.append(item)
     return compact
 
@@ -2537,14 +2556,50 @@ def execute_search_nodes_tool(
                     seen.add(row["node_id"])
                     matches.append(row)
     matches.sort(key=lambda row: score_node_match(row, query_assembly), reverse=True)
+    matches = finalize_trust_ranking(
+        db, matches, runtime_config=runtime_config, identity=identity
+    )
     top_matches = annotate_matches_with_trust_diagnostics(db, matches[:limit], identity)
     details["trust_diagnostics"] = trust_diagnostics_from_matches(top_matches)
+    if getattr(runtime_config, "trust_ranking_enabled", False):
+        details["trust_ranking"] = {
+            "enabled": True,
+            "profile_id": getattr(runtime_config, "trust_weighting_profile", None)
+            or ((identity or {}).get("weighting_profile_id")),
+            "reorder_count": sum(
+                1 for row in top_matches if row.get("rank_before") != row.get("rank_after")
+            ),
+        }
     compiled_contexts = []
     for match in top_matches[:2]:
         context = compile_context(db, match["node_id"])
         if context:
             compiled_contexts.append(context)
     return {"matches": top_matches, "compiled_contexts": compiled_contexts}, details
+
+
+def finalize_trust_ranking(
+    db: Database,
+    rows: list[dict[str, Any]],
+    *,
+    runtime_config: Any | None,
+    identity: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    if not rows or not getattr(runtime_config, "trust_ranking_enabled", False):
+        return rows
+    from tirzah.db.memory_store import as_memory_store
+    from tirzah.retrieval.queries import apply_search_trust_ranking, trust_profile_id
+
+    profile_id = trust_profile_id(identity, getattr(runtime_config, "trust_weighting_profile", None))
+    return apply_search_trust_ranking(
+        as_memory_store(db),
+        rows,
+        enabled=True,
+        profile_id=profile_id,
+        weight=float(getattr(runtime_config, "trust_ranking_weight", 1.0)),
+        max_boost=int(getattr(runtime_config, "trust_ranking_max_boost", 20)),
+        hybrid_weight=float(getattr(runtime_config, "trust_ranking_hybrid_weight", 0.15)),
+    )
 
 
 def first_active_agent_identity(db: Database) -> dict[str, Any] | None:

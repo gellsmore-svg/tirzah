@@ -190,7 +190,10 @@ models that is not cl100k.
 - Always show the before/after effect in developer traces and a compact version in the readable activity log.
 - Keep the current conservative default (diagnostics-only) until operators opt in.
 
-**Priority:** High
+**Priority:** High — **implemented.** Opt-in `trust_ranking_enabled` re-ranks
+after primary lexical/hybrid order with a bounded boost from the existing
+trust/temporal diagnostic. Per-ask/session profile override; traces show
+before/after rank and score. Default remains diagnostics-only.
 **Related:** `src/tirzah/retrieval/trust.py`, `src/tirzah/db/governance.py`, `docs/governance-schema-plan.md`, known V1 gaps around trust/temporal ranking.
 
 ### 3.2 Contradiction and Conflict Detection Candidates

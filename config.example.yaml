@@ -28,6 +28,12 @@ runtime:
   # near_match_max_candidates: 8
   # near_match_per_term: 3
   # weak_match_fallback_score: 5
+  # Opt-in trust/temporal ranking after lexical/hybrid order (default: diagnostics only).
+  # trust_ranking_enabled: false
+  # trust_weighting_profile: default_balanced
+  # trust_ranking_weight: 1.0
+  # trust_ranking_max_boost: 20
+  # trust_ranking_hybrid_weight: 0.15
   # HTTP-backed embedding adapters are not compliant for ingestion/retrieval memory operations.
   allow_http_ingestion_adapters: false
   embedding_model: nomic-embed-text:latest

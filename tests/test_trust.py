@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from bson import ObjectId
 
 from tirzah.retrieval.trust import (
+    apply_trust_ranking,
     temporal_recency_component,
     trust_temporal_diagnostic,
     trust_temporal_diagnostic_for_node,
@@ -61,6 +62,28 @@ def test_trust_temporal_diagnostic_uses_origin_date_for_recency() -> None:
     diagnostic = trust_temporal_diagnostic(node, profile=profile, now=now)
     assert diagnostic["signals"]["origin_date"] == "2026-01-01"
     assert diagnostic["components"]["recency"] == 0.5
+
+
+def test_apply_trust_ranking_is_noop_when_disabled() -> None:
+    rows = [
+        {"node_id": "a", "hybrid_score": 0.5, "endorsement_label": "unreviewed"},
+        {"node_id": "b", "hybrid_score": 0.5, "endorsement_label": "explicit_endorsed"},
+    ]
+    assert apply_trust_ranking(rows, enabled=False) == rows
+
+
+def test_apply_trust_ranking_reorders_and_records_before_after() -> None:
+    rows = [
+        {"node_id": "a", "hybrid_score": 0.5, "endorsement_label": "unreviewed"},
+        {"node_id": "b", "hybrid_score": 0.5, "endorsement_label": "explicit_endorsed"},
+    ]
+    ranked = apply_trust_ranking(rows, enabled=True, hybrid_weight=0.15)
+    assert [row["node_id"] for row in ranked] == ["b", "a"]
+    assert ranked[0]["rank_before"] == 1
+    assert ranked[0]["rank_after"] == 0
+    assert ranked[0]["trust_ranking"]["position_delta"] == 1
+    assert ranked[0]["trust_ranking"]["ranking_score_after"] > ranked[0]["trust_ranking"]["ranking_score_before"]
+    assert ranked[1]["trust_ranking"]["position_delta"] == -1
 
 
 def test_trust_temporal_diagnostic_for_node_fetches_profile() -> None:

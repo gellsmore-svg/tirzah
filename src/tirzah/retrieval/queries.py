@@ -74,6 +74,11 @@ def search_nodes(
     query_embedding: dict[str, Any] | None = None,
     vector_search_index: str | None = None,
     vector_scan_limit: int | None = None,
+    trust_ranking_enabled: bool = False,
+    trust_weighting_profile: str | None = None,
+    trust_ranking_weight: float = 1.0,
+    trust_ranking_max_boost: int = 20,
+    trust_ranking_hybrid_weight: float = 0.15,
 ) -> list[dict[str, Any]]:
     store = as_memory_store(db)
     filters: dict[str, Any] = active_node_filter()
@@ -123,9 +128,69 @@ def search_nodes(
         if query_embedding is not None:
             ranked = hybrid_rank(nodes, query, limit=limit)
             if ranked:  # fall back to lexical only if the relevance gate emptied the pool
-                return [serialize_ranked_node(item) for item in ranked]
+                results = [serialize_ranked_node(item) for item in ranked]
+                return apply_search_trust_ranking(
+                    store,
+                    results,
+                    enabled=trust_ranking_enabled,
+                    profile_id=trust_profile_id(identity, trust_weighting_profile),
+                    weight=trust_ranking_weight,
+                    max_boost=trust_ranking_max_boost,
+                    hybrid_weight=trust_ranking_hybrid_weight,
+                )
         nodes.sort(key=lambda node: node_search_sort_key(node, query), reverse=True)
-    return [serialize_node(node) for node in nodes[:limit]]
+    results = []
+    for node in nodes[:limit]:
+        row = serialize_node(node)
+        if query:
+            row["lexical_score"] = node_search_score(node, query)
+        results.append(row)
+    return apply_search_trust_ranking(
+        store,
+        results,
+        enabled=trust_ranking_enabled,
+        profile_id=trust_profile_id(identity, trust_weighting_profile),
+        weight=trust_ranking_weight,
+        max_boost=trust_ranking_max_boost,
+        hybrid_weight=trust_ranking_hybrid_weight,
+    )
+
+
+def trust_profile_id(identity: dict[str, Any] | None, override: str | None) -> str | None:
+    if override:
+        return override
+    if identity and identity.get("weighting_profile_id"):
+        return str(identity["weighting_profile_id"])
+    return None
+
+
+def apply_search_trust_ranking(
+    store: MemoryStore,
+    rows: list[dict[str, Any]],
+    *,
+    enabled: bool,
+    profile_id: str | None,
+    weight: float,
+    max_boost: int,
+    hybrid_weight: float,
+) -> list[dict[str, Any]]:
+    if not enabled:
+        return rows
+    from tirzah.db.governance import get_trust_weighting_profile
+    from tirzah.retrieval.trust import apply_trust_ranking
+
+    profile = None
+    db = getattr(store, "db", store)
+    if profile_id:
+        profile = get_trust_weighting_profile(db, profile_id)
+    return apply_trust_ranking(
+        rows,
+        enabled=True,
+        profile=profile,
+        weight=weight,
+        max_boost=max_boost,
+        hybrid_weight=hybrid_weight,
+    )
 
 
 def filter_nodes_for_identity(
