@@ -96,7 +96,12 @@ date as a graph-edge signal and document-type classification.
 - Add format-specific labels (e.g. `code_python`, `html_export`).
 - Provide safe stripping of front-matter, navigation chrome, etc., with the raw source always archived.
 
-**Priority:** Medium
+**Priority:** Medium — **implemented.** `SUPPORTED_SUFFIXES` now includes HTML,
+common code extensions, JSON/YAML, and CSV. Structure extraction lives in
+`ingestion/formats.py` and still emits `source_root` / `source_section` /
+`source_chunk`. Raw files are archived unchanged; HTML chrome/scripts and
+Markdown front matter are stripped only from the parsed tree. Remaining:
+richer language grammars and binary/office formats.
 **Related:** `src/tirzah/ingestion/parser.py`, `src/tirzah/ingestion/files.py`, web upload paths.
 
 ---

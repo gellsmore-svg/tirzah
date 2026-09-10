@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Additional source formats:** ingest HTML (heading outline, chrome/script
+  stripped), common code files (Python AST; JS/TS/Rust/Go/Java/Ruby
+  declarations), and JSON/YAML/CSV while archiving the original bytes.
+  Format labels such as `html_export` and `code_python` are applied automatically.
 - **Chronological intelligence:** origin dates now stamp every ingested node
   with source and confidence; `search-nodes --origin-after/--origin-before`
   (and the memory-agent `search_nodes` tool / `/api/search`) filter on

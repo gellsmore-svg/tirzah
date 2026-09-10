@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tirzah.ingestion.formats import (
+    canonical_kind,
+    chunk_strategy_for,
+    format_labels_for,
+    parse_structure,
+    strip_front_matter,
+)
 from tirzah.models.ingestion import IngestedNode, IngestionResult, SourceRef
 
 
@@ -13,10 +20,15 @@ class MockIngestionAdapter:
         source_kind: str,
         extra_labels: list[str] | None = None,
     ) -> IngestionResult:
-        title = first_heading(text) or path.stem
-        sections = parse_sections(text, title)
-        labels = normalized_extra_labels(extra_labels)
-        nodes = [with_extra_labels(root_node(title, text, len(sections)), labels)]
+        kind = canonical_kind(source_kind)
+        title = first_heading(strip_front_matter(text)) or path.stem
+        sections = parse_structure(text, kind, title)
+        if kind == "html" and sections:
+            title = sections[0]["title"] or title
+        labels = normalized_extra_labels([*(extra_labels or []), *format_labels_for(kind)])
+        strategy = chunk_strategy_for(kind)
+        outline_text = "\n\n".join(item["text"] for item in sections if item.get("text")) or text
+        nodes = [with_extra_labels(root_node(title, outline_text, len(sections)), labels)]
         for section_index, section in enumerate(sections, start=1):
             section_key = f"section-{section_index}"
             nodes.append(
@@ -29,7 +41,8 @@ class MockIngestionAdapter:
                         labels=["source_section"],
                         metadata={
                             "adapter": "mock",
-                            "chunk_strategy": "markdown_sections",
+                            "chunk_strategy": strategy,
+                            "source_kind": kind,
                             "section_index": section_index,
                         },
                     ),
@@ -47,7 +60,8 @@ class MockIngestionAdapter:
                             labels=["source_chunk"],
                             metadata={
                                 "adapter": "mock",
-                                "chunk_strategy": "markdown_paragraphs",
+                                "chunk_strategy": f"{strategy}_chunks",
+                                "source_kind": kind,
                                 "section_index": section_index,
                                 "paragraph_index": paragraph_index,
                             },
@@ -103,31 +117,7 @@ def with_extra_labels(node: IngestedNode, extra_labels: list[str]) -> IngestedNo
 
 
 def parse_sections(text: str, fallback_title: str) -> list[dict]:
-    sections: list[dict] = []
-    current_title = fallback_title
-    current_lines: list[str] = []
-
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            if current_lines:
-                sections.append(section(current_title, "\n".join(current_lines)))
-            current_title = stripped.lstrip("#").strip() or fallback_title
-            current_lines = []
-        else:
-            current_lines.append(line)
-
-    if current_lines:
-        sections.append(section(current_title, "\n".join(current_lines)))
-    if not sections:
-        sections.append(section(fallback_title, text))
-    return sections
-
-
-def section(title: str, text: str) -> dict:
-    paragraphs = [block.strip() for block in text.split("\n\n") if block.strip()]
-    section_text = text.strip()
-    return {"title": title, "text": section_text, "paragraphs": paragraphs or [section_text]}
+    return parse_structure(text, "markdown", fallback_title)
 
 
 def summarize(text: str, limit: int = 500) -> str:

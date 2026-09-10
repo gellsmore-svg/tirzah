@@ -11,7 +11,8 @@ timestamp: 2026-06-19T00:00:00Z
 
 Turns source documents into the [graph memory](../concepts/graph-memory.md):
 
-- **`parser.py`** — deterministic heading/paragraph parsing into the
+- **`parser.py` / `formats.py`** — read supported sources (Markdown, HTML, common
+  code, JSON/YAML/CSV) and parse them into the
   `source_root → source_section → source_chunk` tree (the default mock-adapter
   baseline). Optional `ingestion_adapter: llm` proposes the same tree via a
   local Ollama model or an external coding CLI (Kiro, Claude, Codex, Gemini, Grok);

@@ -31,8 +31,14 @@ def test_discover_folder_sources_finds_markdown_and_text(tmp_path: Path) -> None
     (root / "a2.markdown").write_text("a2", encoding="utf-8")
     (root / "b.txt").write_text("b", encoding="utf-8")
     (root / "c.json").write_text("{}", encoding="utf-8")
+    (root / "d.pdf").write_text("nope", encoding="utf-8")
 
-    assert [path.name for path in discover_folder_sources(root)] == ["a.md", "a2.markdown", "b.txt"]
+    assert [path.name for path in discover_folder_sources(root)] == [
+        "a.md",
+        "a2.markdown",
+        "b.txt",
+        "c.json",
+    ]
 
 
 def test_discover_folder_sources_skips_git_directory(tmp_path: Path) -> None:

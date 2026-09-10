@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tirzah.ingestion.formats import KIND_BY_SUFFIX
 
-SUPPORTED_SUFFIXES = {".md", ".markdown", ".txt"}
+SUPPORTED_SUFFIXES = set(KIND_BY_SUFFIX)
 
 
 def read_text_source(path: Path | str) -> tuple[str, str]:
