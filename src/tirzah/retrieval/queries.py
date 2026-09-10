@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 from bson import ObjectId
@@ -67,6 +67,8 @@ def search_nodes(
     document_id: str | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
+    origin_after: str | None = None,
+    origin_before: str | None = None,
     limit: int = 20,
     identity: dict[str, Any] | None = None,
     query_embedding: dict[str, Any] | None = None,
@@ -88,6 +90,13 @@ def search_nodes(
         created_filter["$lte"] = created_before
     if created_filter:
         filters["created_at"] = created_filter
+    origin_filter = {}
+    if origin_after:
+        origin_filter["$gte"] = origin_after
+    if origin_before:
+        origin_filter["$lte"] = origin_before
+    if origin_filter:
+        filters["origin_date"] = origin_filter
 
     candidate_limit = max(limit * 5, 50) if query else limit
     if identity:
@@ -202,12 +211,34 @@ def node_search_score(node: dict[str, Any], query: str) -> int:
     return score
 
 
-def node_search_sort_key(node: dict[str, Any], query: str) -> tuple[int, float, int]:
+def node_search_sort_key(node: dict[str, Any], query: str) -> tuple[int, int, float, int]:
     return (
         node_search_score(node, query),
+        origin_date_rank_value(node),
         datetime_sort_value(node.get("last_used_at")),
         -len(str(node.get("text") or "")),
     )
+
+
+def origin_date_sort_value(node: dict[str, Any]) -> str:
+    origin = node.get("origin_date")
+    if isinstance(origin, str) and origin:
+        return origin[:10]
+    created = node.get("created_at")
+    if isinstance(created, datetime):
+        return created.date().isoformat()
+    if isinstance(created, str) and created:
+        return created[:10]
+    return "0000-01-01"
+
+
+def origin_date_rank_value(node: dict[str, Any]) -> int:
+    raw = origin_date_sort_value(node)
+    try:
+        year, month, day = (int(part) for part in raw.split("-")[:3])
+        return date(year, month, day).toordinal()
+    except (TypeError, ValueError):
+        return 0
 
 
 def datetime_sort_value(value: Any) -> float:
@@ -331,6 +362,7 @@ def hybrid_rank(
             -item["hybrid_score"],
             -item["vector_similarity"],
             -item["lexical_score"],
+            -origin_date_rank_value(item["node"]),
             node_identity(item["node"]),
         )
     )
@@ -1563,6 +1595,9 @@ def serialize_node(node: dict[str, Any]) -> dict[str, Any]:
         "last_used_at": iso(node.get("last_used_at")),
         "ingestion_epoch": node.get("ingestion_epoch"),
         "status": node.get("status"),
+        "origin_date": node.get("origin_date"),
+        "origin_date_source": node.get("origin_date_source"),
+        "origin_date_confidence": node.get("origin_date_confidence"),
         "provenance": node.get("provenance", {}),
         "created_at": iso(node.get("created_at")),
     }
@@ -1578,4 +1613,16 @@ def parse_iso_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
     normalized = value.replace("Z", "+00:00")
-    return datetime.fromisoformat(normalized)
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None and len(normalized) <= 10:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def parse_iso_date(value: str | None) -> str | None:
+    if not value:
+        return None
+    from tirzah.ingestion.dates import parse_human_date
+
+    parsed = parse_human_date(value)
+    return parsed.isoformat() if parsed else None

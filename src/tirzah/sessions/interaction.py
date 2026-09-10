@@ -2007,6 +2007,8 @@ def allowed_tool_specs(web_enabled: bool = False) -> list[dict[str, Any]]:
             "arguments": {
                 "query": "string",
                 "label": "optional string",
+                "origin_after": "optional YYYY-MM-DD",
+                "origin_before": "optional YYYY-MM-DD",
                 "limit": "optional integer, max 10",
             },
         },
@@ -2184,6 +2186,8 @@ def execute_tool_calls(
                     query=arguments.get("query"),
                     original_query=original_query,
                     label=arguments.get("label"),
+                    origin_after=arguments.get("origin_after"),
+                    origin_before=arguments.get("origin_before"),
                     limit=bounded_limit(arguments.get("limit"), default=5),
                     session_id=session_id,
                     runtime_config=runtime_config,
@@ -2400,6 +2404,8 @@ def execute_search_nodes_tool(
     query: str | None,
     original_query: str | None = None,
     label: str | None = None,
+    origin_after: str | None = None,
+    origin_before: str | None = None,
     limit: int = 5,
     session_id: str | None = None,
     runtime_config: Any = None,
@@ -2416,6 +2422,8 @@ def execute_search_nodes_tool(
             db,
             query=cleaned_query,
             label=label,
+            origin_after=origin_after,
+            origin_before=origin_before,
             limit=max(limit * 10, 50),
         )
         identity_exclusion_sample_size = len(unrestricted_sample)
@@ -2426,16 +2434,31 @@ def execute_search_nodes_tool(
             db,
             query=cleaned_query,
             label=label,
+            origin_after=origin_after,
+            origin_before=origin_before,
             limit=limit,
             identity=identity,
             query_embedding=query_embedding,
         )
     elif query_embedding is not None:
         matches = search_nodes(
-            db, query=cleaned_query, label=label, limit=limit, query_embedding=query_embedding
+            db,
+            query=cleaned_query,
+            label=label,
+            origin_after=origin_after,
+            origin_before=origin_before,
+            limit=limit,
+            query_embedding=query_embedding,
         )
     else:
-        matches = search_nodes(db, query=cleaned_query, label=label, limit=limit)
+        matches = search_nodes(
+            db,
+            query=cleaned_query,
+            label=label,
+            origin_after=origin_after,
+            origin_before=origin_before,
+            limit=limit,
+        )
     details: dict[str, Any] = {
         "normalized_query": cleaned_query,
         "ranking_query": ranking_query,
@@ -2501,8 +2524,12 @@ def search_nodes_with_optional_identity(
     limit: int,
     identity: dict[str, Any] | None,
     query_embedding: dict[str, Any] | None = None,
+    origin_after: str | None = None,
+    origin_before: str | None = None,
 ) -> list[dict[str, Any]]:
     extra = {"query_embedding": query_embedding} if query_embedding is not None else {}
+    extra["origin_after"] = origin_after
+    extra["origin_before"] = origin_before
     if identity:
         return search_nodes(db, query=query, label=label, limit=limit, identity=identity, **extra)
     return search_nodes(db, query=query, label=label, limit=limit, **extra)

@@ -7,6 +7,14 @@ from typing import Any
 
 from tirzah.models.ingestion import IngestionResult
 
+ORIGIN_DATE_CONFIDENCE = {
+    "operator": 1.0,
+    "explicit_content": 0.9,
+    "filename": 0.7,
+    "file_created": 0.4,
+    "file_modified": 0.3,
+}
+
 
 MONTHS = {
     "january": 1,
@@ -45,6 +53,7 @@ def annotate_source_dates(result: IngestionResult, path: Path, text: str) -> Ing
     analysis = analyze_source_dates(path, text)
     result.source.origin_date = analysis.get("origin_date")
     result.source.origin_date_source = analysis.get("origin_date_source")
+    result.source.origin_date_confidence = analysis.get("origin_date_confidence")
     result.source.date_candidates = analysis.get("date_candidates") or []
     return result
 
@@ -56,11 +65,25 @@ def analyze_source_dates(path: Path, text: str) -> dict[str, Any]:
         *filesystem_date_candidates(path),
     ]
     selected = selected_origin_date(candidates)
+    origin_source = selected.get("source") if selected else None
+    confidence = origin_date_confidence_for(origin_source, raw=selected.get("raw") if selected else None)
     return {
         "origin_date": selected.get("date") if selected else None,
-        "origin_date_source": selected.get("source") if selected else None,
+        "origin_date_source": origin_source,
+        "origin_date_confidence": confidence,
         "date_candidates": candidates,
     }
+
+
+def origin_date_confidence_for(source: str | None, *, raw: str | None = None) -> float | None:
+    if not source:
+        return None
+    confidence = ORIGIN_DATE_CONFIDENCE.get(source)
+    if confidence is None:
+        return None
+    if raw and raw.strip().isdigit() and len(raw.strip()) == 4:
+        return round(min(confidence, 0.6), 3)
+    return confidence
 
 
 def selected_origin_date(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:

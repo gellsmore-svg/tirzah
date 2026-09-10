@@ -20,6 +20,7 @@ from tirzah.db.repositories import (
     semantic_edge_candidate_exists,
     semantic_edge_candidate_pair_key,
     summarize_node_text,
+    update_document_origin_date,
 )
 from tirzah.models.ingestion import IngestedNode, IngestionResult, SourceRef
 
@@ -155,6 +156,43 @@ def test_commit_ingestion_persists_source_origin_date_metadata() -> None:
     assert source["origin_date"] == "2020-01-01"
     assert source["origin_date_source"] == "explicit_content"
     assert source["date_candidates"][0]["source"] == "explicit_content"
+    assert db.nodes.rows[0]["origin_date"] == "2020-01-01"
+    assert db.nodes.rows[0]["origin_date_source"] == "explicit_content"
+
+
+def test_update_document_origin_date_stamps_active_nodes_with_history() -> None:
+    db = FakeDb()
+    result = IngestionResult(
+        source=SourceRef(
+            path="source.md",
+            kind="markdown",
+            checksum_sha256="checksum",
+            origin_date="2020-01-01",
+            origin_date_source="filename",
+            origin_date_confidence=0.7,
+        ),
+        title="Source",
+        summary="Summary",
+        nodes=[IngestedNode(node_key="root", title="Root", text="Root text")],
+        created_at=datetime(2026, 5, 30, 12, tzinfo=timezone.utc),
+    )
+    inserted = commit_ingestion(db, result)
+    updated = update_document_origin_date(
+        db,
+        inserted["document_id"],
+        "3 February 2021",
+        reviewer="tester",
+        note="corrected from publication page",
+    )
+    assert updated["ok"] is True
+    assert updated["origin_date"] == "2021-02-03"
+    assert updated["origin_date_source"] == "operator"
+    assert updated["origin_date_confidence"] == 1.0
+    source = db.documents.rows[0]["source"]
+    assert source["origin_date"] == "2021-02-03"
+    assert source["origin_date_history"][0]["origin_date"] == "2020-01-01"
+    assert db.nodes.rows[0]["origin_date"] == "2021-02-03"
+    assert db.nodes.rows[0]["origin_date_source"] == "operator"
 
 
 def test_commit_ingestion_annotates_nodes_with_embedding_metadata() -> None:
@@ -1778,6 +1816,10 @@ def matches(row, query):
             if "$ne" in expected and actual == expected["$ne"]:
                 return False
             if "$nin" in expected and actual in expected["$nin"]:
+                return False
+            if "$gte" in expected and not (actual is not None and actual >= expected["$gte"]):
+                return False
+            if "$lte" in expected and not (actual is not None and actual <= expected["$lte"]):
                 return False
             if "$gt" in expected and not (actual is not None and actual > expected["$gt"]):
                 return False

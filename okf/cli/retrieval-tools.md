@@ -12,7 +12,10 @@ timestamp: 2026-06-19T00:00:00Z
 Direct access to the [retrieval module](../modules/retrieval.md):
 
 - **`search-nodes`** — lexical (and, with embeddings,
-  [hybrid](../concepts/hybrid-and-semantic.md)) node search.
+  [hybrid](../concepts/hybrid-and-semantic.md)) node search. `--origin-after` /
+  `--origin-before` filter on source origin dates.
+- **`set-origin-date`** — operator correction of a document origin date, stamped
+  onto active nodes with provenance.
 - **`node-context`** — a node plus its document, parent, and children.
 - **`graph-edges` / `expand-proximity` / `expand-graph-paths`** — inspect edges and
   traverse the [graph](../concepts/graph-memory.md) from a node.

@@ -46,6 +46,21 @@ def test_trust_temporal_diagnostic_reports_components_without_reranking() -> Non
     }
     assert diagnostic["score"] == 0.5125
     assert diagnostic["signals"]["endorsement_label"] == "unreviewed"
+    assert diagnostic["signals"]["origin_date"] is None
+
+
+def test_trust_temporal_diagnostic_uses_origin_date_for_recency() -> None:
+    now = datetime(2026, 1, 11, tzinfo=timezone.utc)
+    node = {
+        "endorsement_label": "unreviewed",
+        "created_at": datetime(2026, 1, 10, tzinfo=timezone.utc),
+        "origin_date": "2026-01-01",
+        "usage_score": 0,
+    }
+    profile = {"recency_importance": 1.0, "default_decay_half_life_days": 10}
+    diagnostic = trust_temporal_diagnostic(node, profile=profile, now=now)
+    assert diagnostic["signals"]["origin_date"] == "2026-01-01"
+    assert diagnostic["components"]["recency"] == 0.5
 
 
 def test_trust_temporal_diagnostic_for_node_fetches_profile() -> None:

@@ -66,6 +66,7 @@ from tirzah.db.repositories import (
     promote_ingestion_tree,
     reject_ingestion_tree,
     review_semantic_edge_candidate,
+    update_document_origin_date,
 )
 from tirzah.db.queue import enqueue_source, queue_summary, recent_jobs
 from tirzah.ingestion.embedding_backfill import (
@@ -81,6 +82,7 @@ from tirzah.retrieval.queries import (
     embedding_candidate_report,
     expand_graph_paths,
     expand_proximity,
+    parse_iso_date,
     graph_edges_for_node,
     list_documents,
     search_nodes,
@@ -189,6 +191,12 @@ class RebuildDocumentRequest(BaseModel):
     ingestion_epoch: str | None = None
     mode: str = "full"
     compare_only: bool = False
+
+
+class SetOriginDateRequest(BaseModel):
+    origin_date: str
+    reviewer: str = "user"
+    note: str | None = None
 
 
 class ReviewSemanticEdgeCandidateRequest(BaseModel):
@@ -874,11 +882,34 @@ def create_app() -> FastAPI:
         return {"ok": True, "session": create_session(db, title=request.title, session_id=request.session_id)}
 
     @app.get("/api/search")
-    def search(query: str = "", label: str | None = None, limit: int = 10) -> dict[str, Any]:
+    def search(
+        query: str = "",
+        label: str | None = None,
+        origin_after: str | None = None,
+        origin_before: str | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
         return {
             "ok": True,
-            "nodes": search_nodes(db, query=query or None, label=label, limit=limit),
+            "nodes": search_nodes(
+                db,
+                query=query or None,
+                label=label,
+                origin_after=parse_iso_date(origin_after),
+                origin_before=parse_iso_date(origin_before),
+                limit=limit,
+            ),
         }
+
+    @app.post("/api/documents/{document_id}/origin-date")
+    def set_document_origin_date(document_id: str, request: SetOriginDateRequest) -> dict[str, Any]:
+        return update_document_origin_date(
+            db,
+            document_id,
+            request.origin_date,
+            reviewer=request.reviewer,
+            note=request.note,
+        )
 
     @app.get("/api/graph/edges/{node_id}")
     def graph_edges(

@@ -76,7 +76,13 @@ separate hash-tree collection for very large corpora.
 - Use recency as a first-class (but secondary) signal in direct retrieval ranking and trust/temporal diagnostics.
 - Allow operators to correct dates via CLI/web with full provenance.
 
-**Priority:** Medium
+**Priority:** Medium — **implemented.** Nodes carry `origin_date` /
+`origin_date_source` / `origin_date_confidence`; search and the memory agent
+accept `origin_after` / `origin_before`; lexical and hybrid ranking use origin
+date as a secondary recency signal; trust diagnostics prefer origin date for
+temporal decay. `set-origin-date` / `POST /api/documents/{id}/origin-date`
+record operator corrections in `origin_date_history`. Remaining: using origin
+date as a graph-edge signal and document-type classification.
 **Related:** `src/tirzah/ingestion/dates.py`, `src/tirzah/retrieval/trust.py`, `src/tirzah/cli.py` chronological helpers, retrieval queries.
 
 ### 1.4 Support for Additional Source Formats with Structure Preservation

@@ -333,6 +333,53 @@ def test_search_nodes_ignores_pending_review_nodes() -> None:
     assert [result["title"] for result in results] == ["Active memory"]
 
 
+def test_search_nodes_filters_by_origin_date_range() -> None:
+    document_id = ObjectId()
+    db = FakeDb(
+        [
+            {
+                "_id": ObjectId(),
+                "document_id": document_id,
+                "tree_id": ObjectId(),
+                "title": "Old paper",
+                "text": "memory",
+                "labels": ["source_chunk"],
+                "status": "active",
+                "origin_date": "2010-01-01",
+            },
+            {
+                "_id": ObjectId(),
+                "document_id": document_id,
+                "tree_id": ObjectId(),
+                "title": "Recent paper",
+                "text": "memory",
+                "labels": ["source_chunk"],
+                "status": "active",
+                "origin_date": "2024-06-01",
+            },
+        ]
+    )
+
+    results = search_nodes(db, origin_after="2020-01-01")
+    assert [row["title"] for row in results] == ["Recent paper"]
+
+
+def test_node_search_sort_prefers_newer_origin_date_as_secondary_signal() -> None:
+    older = {
+        "title": "memory",
+        "text": "memory",
+        "labels": ["source_chunk"],
+        "origin_date": "2010-01-01",
+    }
+    newer = {
+        "title": "memory",
+        "text": "memory",
+        "labels": ["source_chunk"],
+        "origin_date": "2024-01-01",
+    }
+    assert node_search_sort_key(newer, "memory") > node_search_sort_key(older, "memory")
+
+
 class FakeCursor(list):
     def sort(self, *_args):
         return self
@@ -381,6 +428,10 @@ def matches(row, query):
             if "$ne" in expected and value == expected["$ne"]:
                 return False
             if "$nin" in expected and value in expected["$nin"]:
+                return False
+            if "$gte" in expected and not (value is not None and value >= expected["$gte"]):
+                return False
+            if "$lte" in expected and not (value is not None and value <= expected["$lte"]):
                 return False
             if "$in" in expected:
                 if isinstance(value, list):

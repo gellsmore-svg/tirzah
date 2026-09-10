@@ -7,8 +7,16 @@ from tirzah.ingestion.dates import (
     analyze_source_dates,
     explicit_date_candidates,
     filename_date_candidates,
+    origin_date_confidence_for,
     parse_human_date,
 )
+
+
+def test_origin_date_confidence_scales_by_source_and_year_only() -> None:
+    assert origin_date_confidence_for("operator") == 1.0
+    assert origin_date_confidence_for("explicit_content", raw="2020-05-17") == 0.9
+    assert origin_date_confidence_for("explicit_content", raw="2020") == 0.6
+    assert origin_date_confidence_for("filename") == 0.7
 
 
 def test_parse_human_date_accepts_supported_formats() -> None:
@@ -44,6 +52,7 @@ def test_analyze_source_dates_prioritizes_explicit_content_over_filename(tmp_pat
 
     assert analysis["origin_date"] == "2020-01-01"
     assert analysis["origin_date_source"] == "explicit_content"
+    assert analysis["origin_date_confidence"] == 0.6
     assert [candidate["source"] for candidate in analysis["date_candidates"][:2]] == [
         "explicit_content",
         "filename",

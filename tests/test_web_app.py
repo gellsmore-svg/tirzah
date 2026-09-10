@@ -1817,6 +1817,52 @@ def test_endorse_node_endpoint(monkeypatch) -> None:
     }
 
 
+def test_search_accepts_origin_date_filters(monkeypatch) -> None:
+    client = TestClient(app)
+    captured = {}
+
+    def fake_search(_db, query=None, label=None, origin_after=None, origin_before=None, limit=10):
+        captured.update(
+            {
+                "query": query,
+                "origin_after": origin_after,
+                "origin_before": origin_before,
+                "limit": limit,
+            }
+        )
+        return [{"title": "Recent"}]
+
+    monkeypatch.setattr("tirzah.web.app.search_nodes", fake_search)
+    response = client.get(
+        "/api/search",
+        params={"query": "vorton", "origin_after": "2020-01-01", "origin_before": "2024-12-31"},
+    )
+    assert response.status_code == 200
+    assert captured["origin_after"] == "2020-01-01"
+    assert captured["origin_before"] == "2024-12-31"
+
+
+def test_set_origin_date_endpoint(monkeypatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(
+        "tirzah.web.app.update_document_origin_date",
+        lambda _db, document_id, origin_date, reviewer="user", note=None: {
+            "ok": True,
+            "document_id": document_id,
+            "origin_date": origin_date,
+            "reviewer": reviewer,
+            "note": note,
+        },
+    )
+    response = client.post(
+        "/api/documents/doc1/origin-date",
+        json={"origin_date": "2021-02-03", "reviewer": "tester", "note": "fixed"},
+    )
+    assert response.status_code == 200
+    assert response.json()["origin_date"] == "2021-02-03"
+    assert response.json()["note"] == "fixed"
+
+
 def test_rebuild_diff_and_rebuild_document_endpoints(monkeypatch) -> None:
     client = TestClient(app)
     monkeypatch.setattr(

@@ -32,7 +32,9 @@ class SourceRef(BaseModel):
     archive_path: str | None = None
     origin_date: str | None = None
     origin_date_source: str | None = None
+    origin_date_confidence: float | None = None
     date_candidates: list[dict[str, Any]] = Field(default_factory=list)
+    origin_date_history: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class Provenance(BaseModel):
@@ -115,6 +117,9 @@ class NodeRecord(BaseModel):
     ingestion_epoch: str
     status: str = "active"
     content_sha256: str = ""
+    origin_date: str | None = None
+    origin_date_source: str | None = None
+    origin_date_confidence: float | None = None
     provenance: Provenance
     embedding: dict[str, Any] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

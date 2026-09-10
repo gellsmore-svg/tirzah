@@ -338,6 +338,9 @@ def apply_targeted_rebuild(
                         "content_sha256": proposed["content_sha256"],
                         "embedding": embedding,
                         "ingestion_epoch": ingestion_epoch,
+                        "origin_date": result.source.origin_date,
+                        "origin_date_source": result.source.origin_date_source,
+                        "origin_date_confidence": result.source.origin_date_confidence,
                         "metadata": {
                             **(existing.get("metadata") or {}),
                             **(proposed.get("metadata") or {}),
@@ -379,6 +382,9 @@ def apply_targeted_rebuild(
             ingestion_epoch=ingestion_epoch,
             status=result.tree_status or TREE_STATUS_ACTIVE,
             content_sha256=proposed["content_sha256"],
+            origin_date=result.source.origin_date,
+            origin_date_source=result.source.origin_date_source,
+            origin_date_confidence=result.source.origin_date_confidence,
             provenance=Provenance(
                 source_path=result.source.path,
                 source_checksum_sha256=result.source.checksum_sha256,
@@ -540,6 +546,9 @@ def insert_tree_nodes(
             ingestion_epoch=ingestion_epoch,
             status=tree_status,
             content_sha256=content_hash,
+            origin_date=result.source.origin_date,
+            origin_date_source=result.source.origin_date_source,
+            origin_date_confidence=result.source.origin_date_confidence,
             provenance=Provenance(
                 source_path=result.source.path,
                 source_checksum_sha256=result.source.checksum_sha256,
@@ -1998,6 +2007,88 @@ def backfill_schema_metadata(db: Database) -> dict[str, int]:
 
 def label_definitions(db: Database) -> list[dict]:
     return list(db.label_definitions.find({}, {"_id": 0}).sort([("scope", 1), ("key", 1)]))
+
+
+def update_document_origin_date(
+    db: Database,
+    document_id: str,
+    origin_date: str,
+    *,
+    reviewer: str = "user",
+    note: str | None = None,
+    source: str = "operator",
+) -> dict[str, Any]:
+    from tirzah.ingestion.dates import origin_date_confidence_for, parse_human_date
+
+    parsed = parse_human_date(origin_date)
+    if parsed is None:
+        return {
+            "ok": False,
+            "reason": "invalid_origin_date",
+            "origin_date": origin_date,
+        }
+    object_id = parse_tree_object_id(document_id)
+    if object_id is None:
+        return {"ok": False, "reason": "invalid_document_id", "document_id": document_id}
+    document = db.documents.find_one({"_id": object_id})
+    if not document:
+        return {"ok": False, "reason": "document_not_found", "document_id": document_id}
+    now = datetime.now(timezone.utc)
+    iso_date = parsed.isoformat()
+    confidence = origin_date_confidence_for(source, raw=origin_date)
+    current_source = document.get("source") or {}
+    history = list(current_source.get("origin_date_history") or [])
+    history.append(
+        {
+            "origin_date": current_source.get("origin_date"),
+            "origin_date_source": current_source.get("origin_date_source"),
+            "origin_date_confidence": current_source.get("origin_date_confidence"),
+            "replaced_at": now,
+            "reviewer": reviewer,
+            "note": note,
+        }
+    )
+    candidates = list(current_source.get("date_candidates") or [])
+    candidates.append(
+        {
+            "source": source,
+            "date": iso_date,
+            "raw": origin_date,
+            "rationale": note or "Operator-corrected origin date.",
+            "reviewer": reviewer,
+        }
+    )
+    updated_source = {
+        **current_source,
+        "origin_date": iso_date,
+        "origin_date_source": source,
+        "origin_date_confidence": confidence,
+        "origin_date_history": history,
+        "date_candidates": candidates,
+    }
+    db.documents.update_one(
+        {"_id": object_id},
+        {"$set": {"source": updated_source, "updated_at": now}},
+    )
+    node_fields = {
+        "origin_date": iso_date,
+        "origin_date_source": source,
+        "origin_date_confidence": confidence,
+        "updated_at": now,
+    }
+    db.nodes.update_many(
+        {"document_id": object_id, "status": {"$nin": list(INACTIVE_RETRIEVAL_STATUSES)}},
+        {"$set": node_fields},
+    )
+    updated = db.documents.find_one({"_id": object_id}) or document
+    return {
+        "ok": True,
+        "document_id": str(object_id),
+        "origin_date": iso_date,
+        "origin_date_source": source,
+        "origin_date_confidence": confidence,
+        "source": updated.get("source"),
+    }
 
 
 def document_tree(db: Database, document_id: str) -> list[dict]:

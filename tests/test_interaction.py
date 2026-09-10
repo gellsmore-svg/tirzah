@@ -304,7 +304,7 @@ def test_select_focus_node_returns_none_without_matches(monkeypatch) -> None:
 def test_select_focus_node_falls_back_to_ranked_terms(monkeypatch) -> None:
     import tirzah.sessions.interaction as interaction
 
-    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5):
+    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, **kwargs):
         if query == "Tirzah" and label == "source_chunk":
             return [
                 {
@@ -371,7 +371,7 @@ def test_validate_controller_decision_reports_schema_issues() -> None:
 def test_select_focus_node_rejects_weak_best_match(monkeypatch) -> None:
     import tirzah.sessions.interaction as interaction
 
-    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5):
+    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, **kwargs):
         if label == "source_chunk":
             return [
                 {
@@ -406,7 +406,7 @@ def test_select_active_document_focus_node_scopes_search_to_active_document(monk
         ],
     )
 
-    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5):
+    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, **kwargs):
         calls.append({"query": query, "label": label, "document_id": document_id})
         if document_id == "doc1" and label == "source_chunk":
             return [
@@ -470,7 +470,7 @@ def test_select_active_document_focus_node_checks_later_documents_before_default
         ],
     )
 
-    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5):
+    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, **kwargs):
         if document_id == str(second_document_id) and label == "source_chunk":
             return [
                 {
@@ -2361,7 +2361,7 @@ def test_execute_search_nodes_tool_falls_back_to_terms(monkeypatch) -> None:
 
     calls = []
 
-    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5):
+    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, **kwargs):
         calls.append(query)
         if query == "Tirzah":
             return [{"node_id": "node1", "title": "Tirzah"}]
@@ -2387,7 +2387,7 @@ def test_execute_search_nodes_tool_passes_active_identity(monkeypatch) -> None:
 
     identities = []
 
-    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, identity=None):
+    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, identity=None, **kwargs):
         identities.append(identity)
         if identity:
             return [{"node_id": "node1", "title": "Allowed"}]
@@ -2417,7 +2417,7 @@ def test_execute_search_nodes_tool_passes_active_identity(monkeypatch) -> None:
 def test_execute_search_nodes_tool_adds_trust_diagnostics(monkeypatch) -> None:
     import tirzah.sessions.interaction as interaction
 
-    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, identity=None):
+    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, identity=None, **kwargs):
         return [{"node_id": "node1", "title": "Memory", "labels": ["source_chunk"]}]
 
     monkeypatch.setattr(interaction, "search_nodes", fake_search_nodes)
@@ -2449,7 +2449,7 @@ def test_execute_search_nodes_tool_batches_trust_diagnostics(monkeypatch) -> Non
 
     calls = []
 
-    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, identity=None):
+    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, identity=None, **kwargs):
         return [
             {"node_id": "node1", "title": "Memory 1", "labels": ["source_chunk"]},
             {"node_id": "node2", "title": "Memory 2", "labels": ["source_chunk"]},
@@ -2940,7 +2940,7 @@ def test_execute_search_nodes_tool_uses_session_active_documents_for_near_match_
 
     calls = []
 
-    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5):
+    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, **kwargs):
         calls.append(query)
         if query == "Technical":
             return [{"node_id": "node1", "title": "Technical Design"}]
@@ -2998,7 +2998,7 @@ def test_execute_search_nodes_tool_uses_near_match_terms_after_empty_search(monk
 
     calls = []
 
-    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5):
+    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, **kwargs):
         calls.append(query)
         if query == "technical":
             return [{"node_id": "node1", "title": "Technical Design"}]
@@ -3022,7 +3022,7 @@ def test_execute_search_nodes_tool_uses_near_match_terms_after_weak_match(monkey
 
     calls = []
 
-    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, identity=None):
+    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, identity=None, **kwargs):
         calls.append(query)
         if query == "tecnical":
             return [{"node_id": "weak", "title": "Reference", "text_preview": "Generic note."}]
@@ -3045,7 +3045,7 @@ def test_execute_search_nodes_tool_uses_near_match_terms_after_weak_match(monkey
 def test_execute_search_nodes_tool_uses_original_query_for_intent_terms(monkeypatch) -> None:
     import tirzah.sessions.interaction as interaction
 
-    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5):
+    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, **kwargs):
         if query == "system":
             return [
                 {
@@ -3090,7 +3090,7 @@ def test_ranked_focus_matches_uses_near_match_terms_after_empty_search(monkeypat
 
     calls = []
 
-    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5):
+    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, **kwargs):
         calls.append(query)
         if query == "technical":
             return [
@@ -3117,7 +3117,7 @@ def test_ranked_focus_matches_uses_near_match_terms_after_weak_match(monkeypatch
 
     calls = []
 
-    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5):
+    def fake_search_nodes(_db, query=None, label=None, document_id=None, limit=5, **kwargs):
         calls.append(query)
         if query == "tecnical":
             return [{"node_id": "weak", "title": "Reference", "text_preview": "Generic note."}]

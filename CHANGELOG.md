@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Chronological intelligence:** origin dates now stamp every ingested node
+  with source and confidence; `search-nodes --origin-after/--origin-before`
+  (and the memory-agent `search_nodes` tool / `/api/search`) filter on
+  `origin_date`; recency is a secondary ranking signal and a trust diagnostic
+  input. Operators can correct dates with provenance via `set-origin-date` or
+  `POST /api/documents/{id}/origin-date`.
 - **Targeted rebuilds:** `rebuild-document --diff-only` (and `rebuild-by-label`)
   patches only changed sections/chunks in the active tree, keeps stable node
   ids, and skips re-embedding unchanged text. `--compare` and

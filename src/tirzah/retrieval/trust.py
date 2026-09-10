@@ -100,7 +100,7 @@ def trust_temporal_diagnostic(
     profile = profile or {}
     trust_score = explicit_or_endorsement_trust(node)
     recency_component = temporal_recency_component(
-        node.get("last_verified_at") or node.get("created_at"),
+        origin_or_created_timestamp(node) or node.get("last_verified_at") or node.get("created_at"),
         profile.get("default_decay_half_life_days"),
         current_time,
     )
@@ -138,11 +138,25 @@ def trust_temporal_diagnostic(
             "explicit_trust_score": node.get("trust_score"),
             "usage_score": parsed_usage_score(node.get("usage_score")),
             "created_at": iso(node.get("created_at")),
+            "origin_date": node.get("origin_date"),
+            "origin_date_source": node.get("origin_date_source"),
+            "origin_date_confidence": node.get("origin_date_confidence"),
             "last_used_at": iso(node.get("last_used_at")),
             "last_verified_at": iso(node.get("last_verified_at")),
             "verification_required": bool(node.get("verification_required")),
         },
     }
+
+
+def origin_or_created_timestamp(node: dict[str, Any]) -> datetime | None:
+    origin = node.get("origin_date")
+    if isinstance(origin, str) and origin:
+        try:
+            year, month, day = (int(part) for part in origin[:10].split("-"))
+            return datetime(year, month, day, tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def explicit_or_endorsement_trust(node: dict[str, Any]) -> float:

@@ -51,6 +51,7 @@ from tirzah.db.repositories import (
     rebuild_document,
     reject_ingestion_tree,
     review_semantic_edge_candidate,
+    update_document_origin_date,
 )
 from tirzah.db.queue import enqueue_source, queue_summary, recent_jobs
 from tirzah.ingestion.activity import (
@@ -76,6 +77,7 @@ from tirzah.retrieval.queries import (
     graph_edges_for_node,
     list_documents,
     node_context,
+    parse_iso_date,
     parse_iso_datetime,
     render_context_document,
     search_nodes,
@@ -990,7 +992,27 @@ def main() -> None:
     search.add_argument("--document-id", default=None)
     search.add_argument("--created-after", default=None)
     search.add_argument("--created-before", default=None)
+    search.add_argument(
+        "--origin-after",
+        default=None,
+        help="Keep nodes whose origin_date is on or after this date (YYYY-MM-DD).",
+    )
+    search.add_argument(
+        "--origin-before",
+        default=None,
+        help="Keep nodes whose origin_date is on or before this date (YYYY-MM-DD).",
+    )
     search.add_argument("--limit", type=int, default=20)
+
+    set_origin = _add_cmd(
+        subcommands,
+        "set-origin-date",
+        help="Correct a document origin date and stamp active nodes with provenance.",
+    )
+    set_origin.add_argument("document_id")
+    set_origin.add_argument("--date", required=True, help="Origin date (YYYY-MM-DD or a parseable date).")
+    set_origin.add_argument("--reviewer", default="user")
+    set_origin.add_argument("--note", default=None)
 
     context = _add_cmd(subcommands, "node-context")
     context.add_argument("node_id")
@@ -1870,6 +1892,22 @@ def main() -> None:
         print(json.dumps({"ok": document is not None, "document": document}, indent=2))
         return
 
+    if args.command == "set-origin-date":
+        ensure_indexes(db)
+        print(
+            json.dumps(
+                update_document_origin_date(
+                    db,
+                    args.document_id,
+                    args.date,
+                    reviewer=args.reviewer,
+                    note=args.note,
+                ),
+                indent=2,
+            )
+        )
+        return
+
     if args.command == "search-nodes":
         ensure_indexes(db)
         print(
@@ -1884,6 +1922,8 @@ def main() -> None:
                         document_id=args.document_id,
                         created_after=parse_iso_datetime(args.created_after),
                         created_before=parse_iso_datetime(args.created_before),
+                        origin_after=parse_iso_date(args.origin_after),
+                        origin_before=parse_iso_date(args.origin_before),
                         limit=args.limit,
                     ),
                 },
