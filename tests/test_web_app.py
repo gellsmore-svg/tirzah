@@ -2182,6 +2182,65 @@ def test_graph_paths_endpoint(monkeypatch) -> None:
     }
 
 
+def test_graph_explore_endpoint(monkeypatch) -> None:
+    client = TestClient(app)
+
+    monkeypatch.setattr(
+        "tirzah.web.app.graph_neighborhood",
+        lambda _db, node_id, **kwargs: {"ok": True, "focus": {"node_id": node_id}, **kwargs},
+    )
+
+    response = client.get(
+        "/api/graph/explore/node1",
+        params={
+            "direction": "outgoing",
+            "relation_type": "contradicts",
+            "max_depth": 2,
+            "limit": 8,
+            "branch_limit": 4,
+            "endorsement": "explicit_endorsed",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "focus": {"node_id": "node1"},
+        "max_depth": 2,
+        "direction": "outgoing",
+        "relation_type": "contradicts",
+        "limit": 8,
+        "branch_limit": 4,
+        "endorsement_label": "explicit_endorsed",
+        "identity": None,
+    }
+
+
+def test_graph_explore_endpoint_unknown_identity(monkeypatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr("tirzah.web.app.get_agent_identity", lambda _db, _identity_id: None)
+
+    response = client.get(
+        "/api/graph/explore/node1",
+        params={"identity_id": "missing"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["reason"] == "identity_not_found"
+
+
+def test_graph_explore_page_is_vanilla_svg_viewer() -> None:
+    client = TestClient(app)
+    response = client.get("/graph")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "Graph neighborhood" in response.text
+    assert "/api/graph/explore/" in response.text
+    assert "<svg" in response.text
+    assert "http://d3js.org" not in response.text
+    assert "cdn." not in response.text
+
+
 def test_enqueue_vector_semantic_batch_endpoint(monkeypatch) -> None:
     client = TestClient(app)
 

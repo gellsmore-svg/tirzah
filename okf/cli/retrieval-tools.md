@@ -22,6 +22,9 @@ Direct access to the [retrieval module](../modules/retrieval.md):
 - **`node-context`** — a node plus its document, parent, and children.
 - **`graph-edges` / `expand-proximity` / `expand-graph-paths`** — inspect edges and
   traverse the [graph](../concepts/graph-memory.md) from a node.
+- **`graph-explore`** — one- or two-hop neighborhood as text or Mermaid
+  (`--format mermaid`), with relation types and provenance. Optional
+  `--endorsement` / `--identity-id` filters. Web viewer: `/graph`.
 - **`labels`** — the label vocabulary.
 - **Semantic candidates** — `semantic-candidates` (label-based), and the
   embedding-based `vector-semantic-candidates` / `profile-semantic-candidates`

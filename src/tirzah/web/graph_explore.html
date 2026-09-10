@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tirzah · Graph neighborhood</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: system-ui, sans-serif; background: #0f1117; color: #e6e8ee;
+      min-height: 100vh; display: grid; grid-template-rows: auto auto 1fr;
+    }
+    header, form, .meta { padding: 0.75rem 1.25rem; }
+    header { border-bottom: 1px solid #2a3140; display: flex; gap: 1rem; align-items: baseline; }
+    header h1 { font-size: 1.1rem; margin: 0; }
+    header a { color: #7c9cff; }
+    form {
+      display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: end;
+      background: #161a22; border-bottom: 1px solid #2a3140;
+    }
+    label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; color: #9aa3b5; }
+    input, select, button {
+      font: inherit; background: #0f1117; color: #e6e8ee; border: 1px solid #3a4254;
+      border-radius: 6px; padding: 0.4rem 0.55rem;
+    }
+    input[name="node_id"] { min-width: 18rem; }
+    button { background: #2d4aa0; border-color: #3d5ec0; cursor: pointer; }
+    button:hover { background: #3a5bc0; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; min-height: 0; }
+    svg { width: 100%; height: 100%; min-height: 28rem; background: #0c0e14; }
+    .panel { border-left: 1px solid #2a3140; padding: 1rem; overflow: auto; font-size: 0.9rem; }
+    .panel h2 { font-size: 0.95rem; margin: 0 0 0.6rem; }
+    .empty, .error { color: #9aa3b5; }
+    .error { color: #f0a0a0; }
+    .kv { display: grid; grid-template-columns: 7rem 1fr; gap: 0.25rem 0.6rem; }
+    .kv dt { color: #9aa3b5; }
+    .kv dd { margin: 0; word-break: break-word; }
+    .preview { white-space: pre-wrap; color: #c5cad6; margin-top: 0.8rem; }
+    .edge { stroke-width: 1.6; fill: none; }
+    .nlabel { font-size: 12px; fill: #e6e8ee; }
+    .elabel { font-size: 10px; fill: #9aa3b5; }
+    .node { cursor: pointer; }
+    .focus-ring { fill: #1b5c32; stroke: #3dd68c; }
+    .hop1 { fill: #1d2f66; stroke: #7c9cff; }
+    .hop2 { fill: #3a2a12; stroke: #d6b06a; }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+      .panel { border-left: 0; border-top: 1px solid #2a3140; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Graph neighborhood</h1>
+    <a href="/">Ask UI</a>
+    <span class="empty">Read-only one- and two-hop view · no new graph writes</span>
+  </header>
+  <form id="explore-form">
+    <label>Node id
+      <input name="node_id" required placeholder="ObjectId of the focus node">
+    </label>
+    <label>Hops
+      <select name="max_depth">
+        <option value="1">1</option>
+        <option value="2" selected>2</option>
+      </select>
+    </label>
+    <label>Direction
+      <select name="direction">
+        <option value="both" selected>both</option>
+        <option value="outgoing">outgoing</option>
+        <option value="incoming">incoming</option>
+      </select>
+    </label>
+    <label>Relation
+      <input name="relation_type" placeholder="any">
+    </label>
+    <label>Endorsement
+      <input name="endorsement" placeholder="optional filter">
+    </label>
+    <label>Identity id
+      <input name="identity_id" placeholder="optional scope">
+    </label>
+    <button type="submit">Explore</button>
+  </form>
+  <div class="layout">
+    <svg id="canvas" viewBox="0 0 960 560" role="img" aria-label="Neighborhood graph"></svg>
+    <aside class="panel" id="panel">
+      <p class="empty">Enter a node id to draw its neighborhood. Click a node for provenance.</p>
+    </aside>
+  </div>
+  <script>
+    const form = document.getElementById("explore-form");
+    const canvas = document.getElementById("canvas");
+    const panel = document.getElementById("panel");
+    const params = new URLSearchParams(location.search);
+    for (const [key, value] of params.entries()) {
+      if (form.elements[key]) form.elements[key].value = value;
+    }
+    if (form.elements.node_id.value) loadNeighborhood();
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const next = new URL(location.href);
+      const data = new FormData(form);
+      next.search = new URLSearchParams([...data.entries()].filter(([, v]) => v)).toString();
+      history.replaceState({}, "", next);
+      loadNeighborhood();
+    });
+
+    async function loadNeighborhood() {
+      const data = new FormData(form);
+      const nodeId = String(data.get("node_id") || "").trim();
+      if (!nodeId) return;
+      const query = new URLSearchParams();
+      for (const key of ["max_depth", "direction", "relation_type", "endorsement", "identity_id"]) {
+        const value = String(data.get(key) || "").trim();
+        if (value) query.set(key, value);
+      }
+      panel.innerHTML = "<p class='empty'>Loading neighborhood…</p>";
+      canvas.innerHTML = "";
+      try {
+        const response = await fetch(`/api/graph/explore/${encodeURIComponent(nodeId)}?${query}`);
+        const report = await response.json();
+        if (!report.ok) {
+          panel.innerHTML = `<p class="error">${escapeHtml(report.reason || "neighborhood unavailable")}</p>`;
+          return;
+        }
+        draw(report);
+        showNode(report.focus, report);
+      } catch (error) {
+        panel.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
+      }
+    }
+
+    function draw(report) {
+      const nodes = report.nodes || [];
+      const edges = report.edges || [];
+      const focusId = report.focus && report.focus.node_id;
+      const hop1 = nodes.filter((node) => node.hop === 1);
+      const hop2 = nodes.filter((node) => node.hop === 2);
+      const width = 960;
+      const height = Math.max(560, 80 + Math.max(hop1.length, hop2.length, 1) * 64);
+      canvas.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      canvas.innerHTML = "";
+      const positions = {};
+      positions[focusId] = { x: 140, y: height / 2 };
+      hop1.forEach((node, index) => {
+        positions[node.node_id] = { x: 420, y: yFor(index, hop1.length, height) };
+      });
+      hop2.forEach((node, index) => {
+        positions[node.node_id] = { x: 760, y: yFor(index, hop2.length, height) };
+      });
+      for (const edge of edges) {
+        const from = positions[edge.source_node_id];
+        const to = positions[edge.target_node_id];
+        if (!from || !to) continue;
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        path.setAttribute("x1", from.x + 70);
+        path.setAttribute("y1", from.y);
+        path.setAttribute("x2", to.x - 70);
+        path.setAttribute("y2", to.y);
+        path.setAttribute("class", "edge");
+        path.setAttribute("stroke", colorFor(edge.relation_type));
+        canvas.appendChild(path);
+        const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        label.setAttribute("x", (from.x + to.x) / 2);
+        label.setAttribute("y", (from.y + to.y) / 2 - 6);
+        label.setAttribute("text-anchor", "middle");
+        label.setAttribute("class", "elabel");
+        label.textContent = edge.relation_type || "edge";
+        canvas.appendChild(label);
+      }
+      for (const node of nodes) {
+        const pos = positions[node.node_id];
+        if (!pos) continue;
+        const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        group.setAttribute("class", "node");
+        group.addEventListener("click", () => showNode(node, report));
+        const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        rect.setAttribute("x", pos.x - 70);
+        rect.setAttribute("y", pos.y - 18);
+        rect.setAttribute("width", 140);
+        rect.setAttribute("height", 36);
+        rect.setAttribute("rx", 8);
+        rect.setAttribute("class", node.hop === 0 ? "focus-ring" : node.hop === 1 ? "hop1" : "hop2");
+        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        text.setAttribute("x", pos.x);
+        text.setAttribute("y", pos.y + 4);
+        text.setAttribute("text-anchor", "middle");
+        text.setAttribute("class", "nlabel");
+        text.textContent = truncate(node.title || node.node_id || "node", 22);
+        group.appendChild(rect);
+        group.appendChild(text);
+        canvas.appendChild(group);
+      }
+    }
+
+    function showNode(node, report) {
+      const related = (report.edges || []).filter(
+        (edge) => edge.source_node_id === node.node_id || edge.target_node_id === node.node_id,
+      );
+      panel.innerHTML = `
+        <h2>${escapeHtml(node.title || node.node_id || "node")}</h2>
+        <dl class="kv">
+          <dt>node</dt><dd>${escapeHtml(node.node_id || "")}</dd>
+          <dt>hop</dt><dd>${escapeHtml(String(node.hop ?? 0))}</dd>
+          <dt>endorsement</dt><dd>${escapeHtml(node.endorsement_label || "none")}</dd>
+          <dt>origin</dt><dd>${escapeHtml(node.origin_date || "unknown")}</dd>
+          <dt>labels</dt><dd>${escapeHtml((node.labels || []).join(", ") || "none")}</dd>
+          <dt>provenance</dt><dd>${escapeHtml((node.provenance && node.provenance.source_path) || "none")}</dd>
+        </dl>
+        <p class="preview">${escapeHtml(node.text_preview || "")}</p>
+        <h2>Edges</h2>
+        ${related.length ? related.map((edge) => (
+          `<p>${escapeHtml(edge.relation_type || "relation")} · ${escapeHtml(edge.provenance_source || "unknown source")}${edge.reviewer ? " · " + escapeHtml(edge.reviewer) : ""}</p>`
+        )).join("") : "<p class='empty'>No edges in this neighborhood.</p>"}
+      `;
+    }
+
+    function yFor(index, count, height) {
+      if (count <= 1) return height / 2;
+      const pad = 48;
+      return pad + ((height - pad * 2) * index) / (count - 1);
+    }
+    function colorFor(relation) {
+      if (relation === "contradicts") return "#e07070";
+      if (relation === "related_to") return "#7c9cff";
+      if (relation === "supports") return "#3dd68c";
+      if (relation === "contains") return "#6b7380";
+      return "#9aa3b5";
+    }
+    function truncate(value, length) {
+      return value.length > length ? value.slice(0, length - 1) + "…": value;
+    }
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+  </script>
+</body>
+</html>

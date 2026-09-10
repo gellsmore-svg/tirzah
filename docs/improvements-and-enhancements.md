@@ -225,8 +225,12 @@ conflict claims and visualization of accepted `contradicts` neighborhoods.
 - Web: a read-only force-directed or tree+links pane using vanilla JS (no new heavy deps).
 - Respect identity scoping and endorsement filters.
 
-**Priority:** Medium
-**Related:** `expand_proximity`, `expand_graph_paths`, `graph_edges_for_node` in retrieval, web browse/ingestion tabs.
+**Priority:** Medium — **implemented.** `tirzah graph-explore` prints a one- or
+two-hop neighborhood as text or Mermaid. `GET /graph` is a read-only vanilla SVG
+pane over `GET /api/graph/explore/{node_id}`. Neighbors skip superseded nodes and
+honor optional identity/endorsement filters. Remaining: embed the pane in the
+Mahlah Browse tab and richer force-directed layout.
+**Related:** `src/tirzah/retrieval/graph_explore.py`, `expand_proximity`, `expand_graph_paths`, `graph_edges_for_node` in retrieval, web browse/ingestion tabs.
 
 ---
 

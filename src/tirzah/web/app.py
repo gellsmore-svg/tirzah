@@ -91,6 +91,7 @@ from tirzah.retrieval.queries import (
     search_nodes,
 )
 from tirzah.retrieval.contradictions import contradiction_candidate_report
+from tirzah.retrieval.graph_explore import graph_neighborhood
 from tirzah.retrieval.trust import trust_temporal_diagnostic_for_node
 from tirzah.sessions.exchanges import recent_exchanges
 from tirzah.sessions.interaction import (
@@ -144,6 +145,7 @@ a{color:#7c9cff}</style></head><body><div class="box">
 <p>Or run the Mahlah dev server for hot reload:</p>
 <pre><code>cd ../Mahlah &amp;&amp; npm install &amp;&amp; npm run dev</code></pre>
 <p>then open <a href="http://localhost:5273">http://localhost:5273</a>. The API is live here.</p>
+<p>Developer graph neighborhood: <a href="/graph">/graph</a></p>
 </div></body></html>"""
 
 
@@ -526,6 +528,11 @@ def create_app() -> FastAPI:
         if index_file.exists():
             return index_file.read_text(encoding="utf-8")
         return UI_NOT_BUILT_HTML
+
+    @app.get("/graph", response_class=HTMLResponse)
+    def graph_explore_page() -> str:
+        graph_page = Path(__file__).parent / "graph_explore.html"
+        return graph_page.read_text(encoding="utf-8")
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -1094,6 +1101,40 @@ def create_app() -> FastAPI:
                 branch_limit=branch_limit,
             ),
         }
+
+    @app.get("/api/graph/explore/{node_id}")
+    def graph_explore(
+        node_id: str,
+        direction: str = "both",
+        relation_type: str | None = None,
+        max_depth: int = 2,
+        limit: int = 20,
+        branch_limit: int = 8,
+        endorsement: str | None = None,
+        identity_id: str | None = None,
+    ) -> dict[str, Any]:
+        identity = None
+        if identity_id:
+            identity = get_agent_identity(db, identity_id)
+            if identity is None:
+                return {
+                    "ok": False,
+                    "reason": "identity_not_found",
+                    "identity_id": identity_id,
+                    "nodes": [],
+                    "edges": [],
+                }
+        return graph_neighborhood(
+            db,
+            node_id,
+            max_depth=max_depth,
+            direction=direction,
+            relation_type=relation_type,
+            limit=limit,
+            branch_limit=branch_limit,
+            endorsement_label=endorsement,
+            identity=identity,
+        )
 
     @app.get("/api/queue")
     def queue() -> dict[str, Any]:

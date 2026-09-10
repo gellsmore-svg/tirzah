@@ -88,6 +88,11 @@ from tirzah.retrieval.queries import (
     semantic_candidate_nodes,
 )
 from tirzah.retrieval.contradictions import contradiction_candidate_report
+from tirzah.retrieval.graph_explore import (
+    graph_neighborhood,
+    render_graph_explore_mermaid,
+    render_graph_explore_text,
+)
 from tirzah.retrieval.trust import trust_temporal_diagnostic_for_node
 from tirzah.sessions.active_documents import list_active_documents
 from tirzah.sessions.continuity import (
@@ -1234,6 +1239,21 @@ def main() -> None:
     graph_paths.add_argument("--branch-limit", type=int, default=5)
     graph_paths.add_argument("--limit", type=int, default=10)
 
+    graph_explore = _add_cmd(
+        subcommands,
+        "graph-explore",
+        help="render a one- or two-hop neighborhood as text, mermaid, or json",
+    )
+    graph_explore.add_argument("node_id")
+    graph_explore.add_argument("--direction", choices=["incoming", "outgoing", "both"], default="both")
+    graph_explore.add_argument("--relation-type", default=None)
+    graph_explore.add_argument("--max-depth", type=int, default=2, choices=[1, 2])
+    graph_explore.add_argument("--branch-limit", type=int, default=8)
+    graph_explore.add_argument("--limit", type=int, default=20)
+    graph_explore.add_argument("--endorsement", default=None)
+    graph_explore.add_argument("--identity-id", default=None)
+    graph_explore.add_argument("--format", choices=["json", "text", "mermaid"], default="text")
+
     semantic_candidates = _add_cmd(subcommands, "semantic-candidates")
     semantic_candidates.add_argument("node_id")
     semantic_candidates.add_argument("--include-same-document", action="store_true")
@@ -2240,6 +2260,42 @@ def main() -> None:
                 indent=2,
             )
         )
+        return
+
+    if args.command == "graph-explore":
+        ensure_indexes(db)
+        identity = None
+        if args.identity_id:
+            identity = get_agent_identity(db, args.identity_id)
+            if identity is None:
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "reason": "identity_not_found",
+                            "identity_id": args.identity_id,
+                        },
+                        indent=2,
+                    )
+                )
+                return
+        report = graph_neighborhood(
+            db,
+            args.node_id,
+            max_depth=args.max_depth,
+            direction=args.direction,
+            relation_type=args.relation_type,
+            limit=args.limit,
+            branch_limit=args.branch_limit,
+            endorsement_label=args.endorsement,
+            identity=identity,
+        )
+        if args.format == "mermaid":
+            print(render_graph_explore_mermaid(report))
+        elif args.format == "text":
+            print(render_graph_explore_text(report))
+        else:
+            print(json.dumps(report, indent=2))
         return
 
     if args.command == "semantic-candidates":

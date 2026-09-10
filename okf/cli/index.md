@@ -19,7 +19,8 @@ The CLI is `tirzah` (legacy `mnemosyne` alias). `--config` is a **global** flag
   and LLM-proposal review (`list-proposed-ingestions` / `promote-ingestion` /
   `reject-ingestion`).
 - **[Retrieval tools](retrieval-tools.md)** — `search-nodes`, `node-context`,
-  `graph-edges`, `expand-*`, and the semantic-candidate / semantic-edge commands.
+  `graph-edges`, `expand-*`, `graph-explore`, and the semantic-candidate /
+  semantic-edge commands.
 - **[Backfills & queue](backfill-queue.md)** — `backfill-*`, the embedding/profile
   backfill queue, `queue-status`, `memory-health`, `embedding-smoke`.
 - **[Governance & sessions](governance-sessions.md)** — agent identities, trust,

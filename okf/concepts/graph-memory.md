@@ -18,7 +18,9 @@ document builds a hierarchical tree:
   epoch, and endorsement/status fields.
 - Beyond the tree, nodes can be linked by **graph edges** (structural and
   semantic) — see [retrieval modules](../modules/retrieval.md) and the
-  `graph-edges` / `expand-graph-paths` [tools](../cli/retrieval-tools.md).
+  `graph-edges` / `expand-graph-paths` / `graph-explore`
+  [tools](../cli/retrieval-tools.md). `graph-explore` (and `/graph`) renders a
+  one- or two-hop neighborhood with relation types and provenance.
 
 **Rebuilds are non-destructive:** re-ingesting a source opens a **new ingestion
 epoch** and marks the prior tree `superseded` rather than deleting it, so history

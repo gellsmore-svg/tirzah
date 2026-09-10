@@ -1432,6 +1432,111 @@ def test_cli_expand_graph_paths_command(monkeypatch, capsys) -> None:
     }
 
 
+def test_cli_graph_explore_text_format(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tirzah",
+            "graph-explore",
+            "node1",
+            "--direction",
+            "outgoing",
+            "--relation-type",
+            "related_to",
+            "--max-depth",
+            "2",
+            "--endorsement",
+            "explicit_endorsed",
+            "--format",
+            "text",
+        ],
+    )
+    monkeypatch.setattr(
+        "tirzah.cli.load_config",
+        lambda _path: SimpleNamespace(mongo=SimpleNamespace()),
+    )
+    monkeypatch.setattr("tirzah.cli.get_database", lambda _config: "db")
+    monkeypatch.setattr("tirzah.cli.ensure_indexes", lambda _db: None)
+    monkeypatch.setattr(
+        "tirzah.cli.graph_neighborhood",
+        lambda _db, node_id, **kwargs: {
+            "ok": True,
+            "focus": {
+                "node_id": node_id,
+                "title": "Focus",
+                "endorsement_label": kwargs.get("endorsement_label"),
+                "origin_date": "2020-01-01",
+                "provenance": {"source_path": "archive/focus.md"},
+            },
+            "nodes": [
+                {"node_id": node_id, "title": "Focus", "hop": 0},
+                {"node_id": "node2", "title": "Neighbor", "hop": 1, "provenance": {"source_path": "archive/n.md"}},
+            ],
+            "edges": [
+                {
+                    "edge_id": "edge1",
+                    "source_node_id": node_id,
+                    "target_node_id": "node2",
+                    "relation_type": kwargs.get("relation_type"),
+                    "hop": 1,
+                    "provenance_source": "semantic_candidate_review",
+                    "reviewer": "cello",
+                }
+            ],
+            "diagnostics": {"max_depth": kwargs.get("max_depth"), "direction": kwargs.get("direction")},
+        },
+    )
+
+    main()
+
+    output = capsys.readouterr().out
+    assert "Graph neighborhood: Focus" in output
+    assert "Neighbor | related_to | hop 1" in output
+    assert "reviewed by: cello" in output
+    assert "provenance: archive/n.md" in output
+
+
+def test_cli_graph_explore_mermaid_format(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["tirzah", "graph-explore", "abc123", "--format", "mermaid"],
+    )
+    monkeypatch.setattr(
+        "tirzah.cli.load_config",
+        lambda _path: SimpleNamespace(mongo=SimpleNamespace()),
+    )
+    monkeypatch.setattr("tirzah.cli.get_database", lambda _config: "db")
+    monkeypatch.setattr("tirzah.cli.ensure_indexes", lambda _db: None)
+    monkeypatch.setattr(
+        "tirzah.cli.graph_neighborhood",
+        lambda _db, node_id, **_kwargs: {
+            "ok": True,
+            "focus": {"node_id": node_id, "title": "Focus", "hop": 0},
+            "nodes": [
+                {"node_id": node_id, "title": "Focus", "hop": 0},
+                {"node_id": "def456", "title": "Neighbor", "hop": 1},
+            ],
+            "edges": [
+                {
+                    "source_node_id": node_id,
+                    "target_node_id": "def456",
+                    "relation_type": "supports",
+                    "hop": 1,
+                }
+            ],
+            "diagnostics": {},
+        },
+    )
+
+    main()
+
+    output = capsys.readouterr().out
+    assert "flowchart LR" in output
+    assert "supports" in output
+
+
 def test_cli_semantic_candidates_command(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         sys,

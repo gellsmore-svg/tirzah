@@ -105,7 +105,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 # Mahlah-built UI (and any fallback static) under web/static/.
-"tirzah.web" = ["static/**/*"]
+"tirzah.web" = ["static/**/*", "graph_explore.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

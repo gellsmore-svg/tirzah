@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Graph neighborhood explorer:** `graph-explore` renders a one- or two-hop
+  neighborhood as text or Mermaid (`--format mermaid`), including relation
+  types, endorsement, dates, and provenance. Optional `--endorsement` and
+  `--identity-id` filters. Web: `GET /graph` is a vanilla SVG viewer over
+  `GET /api/graph/explore/{node_id}` (no extra JS libraries).
 - **Contradiction candidates:** conservative `contradicts` review candidates from
   embedding neighbors in a high-similarity band (default 0.82–0.97) that also
   match at least two of: shared semantic labels, origin-date delta ≥ 1 day, and
