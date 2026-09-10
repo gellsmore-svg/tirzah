@@ -467,7 +467,7 @@ def test_rebuild_document_uses_original_source_path_for_adapter_title(
     )
     captured = {}
 
-    def fake_rebuild(_db, _document_id, result):
+    def fake_rebuild(_db, _document_id, result, **_kwargs):
         captured["title"] = result.title
         return {"document_id": str(document_id), "replaced": True}
 
@@ -524,10 +524,12 @@ def test_rebuild_document_uses_runtime_ingestion_adapter(monkeypatch, tmp_path: 
     monkeypatch.setattr("tirzah.cli.ingestion_adapter", lambda runtime_config: FakeAdapter())
     monkeypatch.setattr(
         "tirzah.cli.rebuild_document",
-        lambda _db, _document_id, result: {
+        lambda _db, _document_id, result, **_kwargs: {
             "document_id": str(document_id),
             "adapter": result.adapter,
             "title": result.title,
+            "mode": _kwargs.get("mode"),
+            "compare_only": _kwargs.get("compare_only"),
         },
     )
 
@@ -542,6 +544,55 @@ def test_rebuild_document_uses_runtime_ingestion_adapter(monkeypatch, tmp_path: 
         "source_kind": "txt",
         "extra_labels": ["domain_label"],
     }
+    assert result["mode"] == "full"
+    assert result["compare_only"] is False
+
+
+def test_rebuild_document_from_existing_source_passes_diff_flags(monkeypatch, tmp_path: Path) -> None:
+    archive = tmp_path / "abc123.txt"
+    archive.write_text("plain text", encoding="utf-8")
+    document_id = ObjectId()
+    db = FakeDb(
+        [],
+        document={
+            "document_id": str(document_id),
+            "source": {"archive_path": str(archive), "checksum_sha256": "abc123"},
+        },
+    )
+    captured = {}
+
+    monkeypatch.setattr("tirzah.cli.get_document", lambda _db, _document_id: db.document)
+    monkeypatch.setattr("tirzah.cli.existing_document_extra_labels", lambda _db, _document_id: [])
+    monkeypatch.setattr(
+        "tirzah.cli.ingestion_adapter",
+        lambda runtime_config: type(
+            "Adapter",
+            (),
+            {
+                "process": staticmethod(
+                    lambda path, text, source_kind, extra_labels=None: IngestionResult(
+                        source=SourceRef(path=str(path), kind=source_kind),
+                        title="t",
+                        summary="s",
+                        nodes=[IngestedNode(node_key="root", title="t", text="s")],
+                    )
+                )
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        "tirzah.cli.rebuild_document",
+        lambda _db, _document_id, result, **kwargs: captured.update(kwargs) or {"document_id": str(document_id)},
+    )
+
+    result = rebuild_document_from_existing_source(
+        db,
+        str(document_id),
+        mode="diff",
+        compare_only=True,
+    )
+    assert result["ok"] is True
+    assert captured == {"mode": "diff", "compare_only": True}
 
 
 def test_ingest_source_path_uses_configured_ingestion_adapter(monkeypatch, tmp_path: Path) -> None:

@@ -9,8 +9,15 @@ from pymongo.database import Database
 
 from tirzah.db.schema import collection_available
 from tirzah.adapters.embedding import default_embedding_adapter
+from tirzah.ingestion.diff import (
+    as_proposed,
+    diff_ingestion_trees,
+    node_content_sha256,
+    serialize_rebuild_diff,
+)
 from tirzah.models.ingestion import (
     DEFAULT_ENDORSEMENT_LABEL,
+    INACTIVE_RETRIEVAL_STATUSES,
     INGESTION_KIND_DETERMINISTIC,
     SCHEMA_VERSION,
     TREE_STATUS_ACTIVE,
@@ -82,7 +89,20 @@ def rebuild_document(
     document_id: str,
     result: IngestionResult,
     embedder: Any | None = None,
+    *,
+    mode: str = "full",
+    compare_only: bool = False,
 ) -> dict[str, Any]:
+    if mode not in {"full", "diff"}:
+        raise ValueError(f"Unknown rebuild mode: {mode}")
+    if mode == "diff" or compare_only:
+        return targeted_rebuild_document(
+            db,
+            document_id,
+            result,
+            embedder=embedder,
+            compare_only=compare_only,
+        )
     object_id = ObjectId(document_id)
     existing = db.documents.find_one({"_id": object_id})
     if not existing:
@@ -130,6 +150,307 @@ def rebuild_document(
         "superseded_node_count": len(previous_nodes),
         **inserted,
     }
+
+
+def targeted_rebuild_document(
+    db: Database,
+    document_id: str,
+    result: IngestionResult,
+    embedder: Any | None = None,
+    *,
+    compare_only: bool = False,
+) -> dict[str, Any]:
+    object_id = ObjectId(document_id)
+    existing = db.documents.find_one({"_id": object_id})
+    if not existing:
+        raise ValueError(f"Document not found: {document_id}")
+    tree = active_tree_for_document(db, object_id)
+    if tree is None:
+        if compare_only:
+            return {
+                "ok": True,
+                "document_id": str(object_id),
+                "mode": "diff",
+                "compare_only": True,
+                "reason": "no_active_tree",
+                "diff": serialize_rebuild_diff(diff_ingestion_trees([], result.nodes)),
+            }
+        return rebuild_document(db, document_id, result, embedder=embedder, mode="full")
+
+    existing_nodes = list(
+        db.nodes.find(
+            {
+                "document_id": object_id,
+                "tree_id": tree["_id"],
+                "status": {"$nin": list(INACTIVE_RETRIEVAL_STATUSES)},
+            }
+        )
+    )
+    diff = diff_ingestion_trees(existing_nodes, result.nodes)
+    serialized = serialize_rebuild_diff(diff)
+    if compare_only:
+        return {
+            "ok": True,
+            "document_id": str(object_id),
+            "tree_id": str(tree["_id"]),
+            "mode": "diff",
+            "compare_only": True,
+            "applied": False,
+            "diff": serialized,
+        }
+
+    ingestion_epoch = resolved_ingestion_epoch(result)
+    previous_document = dict(existing)
+    previous_tree = dict(tree)
+    previous_nodes = list(db.nodes.find({"tree_id": tree["_id"]}))
+    previous_edges = list_graph_edges_for_tree(db, tree["_id"])
+    try:
+        applied = apply_targeted_rebuild(
+            db,
+            document_id=object_id,
+            tree=tree,
+            result=result,
+            diff=diff,
+            ingestion_epoch=ingestion_epoch,
+            embedder=embedder or default_embedding_adapter(),
+        )
+    except Exception:
+        db.documents.replace_one({"_id": object_id}, previous_document)
+        db.trees.replace_one({"_id": tree["_id"]}, previous_tree)
+        db.nodes.delete_many({"tree_id": tree["_id"]})
+        if previous_nodes:
+            db.nodes.insert_many(previous_nodes)
+        delete_graph_edges_for_tree(db, tree["_id"])
+        if previous_edges and collection_available(db, "graph_edges"):
+            db.graph_edges.insert_many(previous_edges)
+        raise
+    return {
+        "ok": True,
+        "document_id": str(object_id),
+        "tree_id": str(tree["_id"]),
+        "mode": "diff",
+        "compare_only": False,
+        "applied": True,
+        "versioned": True,
+        "replaced": False,
+        "ingestion_epoch": ingestion_epoch,
+        "diff": serialized,
+        **applied,
+    }
+
+
+def active_tree_for_document(db: Database, document_id: object) -> dict[str, Any] | None:
+    trees = list(
+        db.trees.find(
+            {
+                "document_id": document_id,
+                "status": {"$nin": list(INACTIVE_RETRIEVAL_STATUSES)},
+            }
+        )
+    )
+    if not trees:
+        return None
+    return max(trees, key=lambda row: row.get("created_at") or datetime.min.replace(tzinfo=timezone.utc))
+
+
+def apply_targeted_rebuild(
+    db: Database,
+    *,
+    document_id: object,
+    tree: dict[str, Any],
+    result: IngestionResult,
+    diff: dict[str, Any],
+    ingestion_epoch: str,
+    embedder: Any,
+) -> dict[str, Any]:
+    now = result.created_at
+    tree_id = tree["_id"]
+    db.documents.update_one(
+        {"_id": document_id},
+        {
+            "$set": {
+                "title": result.title,
+                "summary": result.summary,
+                "source": result.source.model_dump(),
+                "ingestion_epoch": ingestion_epoch,
+                "updated_at": now,
+            }
+        },
+    )
+    db.trees.update_one(
+        {"_id": tree_id},
+        {
+            "$set": {
+                "ingestion_epoch": ingestion_epoch,
+                "updated_at": now,
+                "ingestion_kind": result.ingestion_kind or tree.get("ingestion_kind"),
+                "adapter": result.adapter,
+            }
+        },
+    )
+
+    by_proposed = {}
+    for kind in ("unchanged", "changed", "moved", "added"):
+        for entry in diff[kind]:
+            proposed = entry["proposed"]
+            by_proposed[(proposed["parent_key"], proposed["node_key"])] = (kind, entry)
+
+    key_to_id: dict[str, object] = {}
+    preserved_ids: list[str] = []
+    updated_ids: list[str] = []
+    added_ids: list[str] = []
+    embedded_node_count = 0
+
+    for order, ingested in enumerate(result.nodes):
+        proposed = as_proposed(ingested)
+        kind, entry = by_proposed.get((proposed["parent_key"], proposed["node_key"]), ("added", None))
+        parent_id = key_to_id.get(proposed["parent_key"]) if proposed["parent_key"] else None
+        if kind == "unchanged":
+            existing = entry["existing"]
+            node_id = existing["_id"]
+            if existing.get("order") != order or existing.get("parent_id") != parent_id:
+                db.nodes.update_one(
+                    {"_id": node_id},
+                    {"$set": {"order": order, "parent_id": parent_id, "updated_at": now}},
+                )
+            key_to_id[proposed["node_key"]] = node_id
+            preserved_ids.append(str(node_id))
+            continue
+        if kind in {"changed", "moved"}:
+            existing = entry["existing"]
+            node_id = existing["_id"]
+            fields: dict[str, Any] = {
+                "node_key": proposed["node_key"],
+                "parent_key": proposed["parent_key"],
+                "parent_id": parent_id,
+                "order": order,
+                "title": proposed["title"],
+                "labels": proposed.get("labels") or existing.get("labels") or [],
+                "updated_at": now,
+            }
+            if kind == "changed" or existing_content_changed(entry):
+                embedding = embedder.embed(proposed["text"])
+                embedded_node_count += 1
+                fields.update(
+                    {
+                        "text": proposed["text"],
+                        "summary": proposed.get("summary") or summarize_node_text(proposed["text"]),
+                        "content_sha256": proposed["content_sha256"],
+                        "embedding": embedding,
+                        "ingestion_epoch": ingestion_epoch,
+                        "metadata": {
+                            **(existing.get("metadata") or {}),
+                            **(proposed.get("metadata") or {}),
+                            "content_sha256": proposed["content_sha256"],
+                        },
+                        "provenance": {
+                            **(existing.get("provenance") or {}),
+                            "source_path": result.source.path,
+                            "source_checksum_sha256": result.source.checksum_sha256,
+                            "archive_path": result.source.archive_path,
+                            "ingestion_epoch": ingestion_epoch,
+                            "adapter": result.adapter,
+                        },
+                    }
+                )
+            db.nodes.update_one({"_id": node_id}, {"$set": fields})
+            key_to_id[proposed["node_key"]] = node_id
+            updated_ids.append(str(node_id))
+            continue
+
+        embedding = embedder.embed(proposed["text"])
+        embedded_node_count += 1
+        node_record = NodeRecord(
+            document_id=document_id,
+            tree_id=tree_id,
+            parent_id=parent_id,
+            node_key=proposed["node_key"],
+            parent_key=proposed["parent_key"],
+            order=order,
+            title=proposed["title"],
+            text=proposed["text"],
+            summary=proposed.get("summary") or summarize_node_text(proposed["text"]),
+            labels=proposed.get("labels") or [],
+            endorsement_label=proposed.get("endorsement_label") or DEFAULT_ENDORSEMENT_LABEL,
+            relations=proposed.get("relations") or [],
+            proximity=proposed.get("proximity") or {},
+            usage_score=int(proposed.get("usage_score") or 0),
+            continuity_critical=bool(proposed.get("continuity_critical")),
+            ingestion_epoch=ingestion_epoch,
+            status=result.tree_status or TREE_STATUS_ACTIVE,
+            content_sha256=proposed["content_sha256"],
+            provenance=Provenance(
+                source_path=result.source.path,
+                source_checksum_sha256=result.source.checksum_sha256,
+                archive_path=result.source.archive_path,
+                ingestion_epoch=ingestion_epoch,
+                endorsement_label=proposed.get("endorsement_label") or DEFAULT_ENDORSEMENT_LABEL,
+                adapter=result.adapter,
+            ),
+            embedding=embedding,
+            metadata={**(proposed.get("metadata") or {}), "content_sha256": proposed["content_sha256"]},
+            created_at=now,
+            updated_at=now,
+        )
+        inserted_id = db.nodes.insert_one(node_record.model_dump()).inserted_id
+        key_to_id[proposed["node_key"]] = inserted_id
+        added_ids.append(str(inserted_id))
+
+    removed_ids = []
+    for entry in diff["removed"]:
+        node_id = entry["existing"]["_id"]
+        db.nodes.update_one(
+            {"_id": node_id},
+            {
+                "$set": {
+                    "status": "superseded",
+                    "superseded_by_epoch": ingestion_epoch,
+                    "updated_at": now,
+                }
+            },
+        )
+        removed_ids.append(str(node_id))
+
+    delete_graph_edges_for_tree(db, tree_id)
+    edge_result = insert_relation_edges(
+        db=db,
+        document_id=document_id,
+        tree_id=tree_id,
+        result=result,
+        key_to_id=key_to_id,
+    )
+    return {
+        "preserved_node_count": len(preserved_ids),
+        "updated_node_count": len(updated_ids),
+        "added_node_count": len(added_ids),
+        "removed_node_count": len(removed_ids),
+        "embedded_node_count": embedded_node_count,
+        "embedding_adapter": embedder.name,
+        "embedding_model": embedder.model,
+        "embedding_dimensions": getattr(embedder, "dimensions", None),
+        "preserved_node_ids": preserved_ids,
+        "updated_node_ids": updated_ids,
+        "added_node_ids": added_ids,
+        "removed_node_ids": removed_ids,
+        **edge_result,
+    }
+
+
+def existing_content_changed(entry: dict[str, Any]) -> bool:
+    proposed = entry.get("proposed") or {}
+    existing = entry.get("existing") or {}
+    return proposed.get("content_sha256") != (existing.get("content_sha256") or node_content_sha256(existing.get("text")))
+
+
+def delete_graph_edges_for_tree(db: Database, tree_id: object) -> None:
+    if collection_available(db, "graph_edges"):
+        db.graph_edges.delete_many({"tree_id": tree_id})
+
+
+def list_graph_edges_for_tree(db: Database, tree_id: object) -> list[dict[str, Any]]:
+    if not collection_available(db, "graph_edges"):
+        return []
+    return list(db.graph_edges.find({"tree_id": tree_id}))
 
 
 def resolved_ingestion_epoch(result: IngestionResult) -> str:
@@ -198,6 +519,8 @@ def insert_tree_nodes(
         parent_id = key_to_id.get(node.parent_key) if node.parent_key else None
         embedding = embedder.embed(node.text)
         embedded_node_count += 1
+        content_hash = node_content_sha256(node.text)
+        metadata = {**(node.metadata or {}), "content_sha256": content_hash}
         node_record = NodeRecord(
             document_id=document_id,
             tree_id=tree_id,
@@ -216,6 +539,7 @@ def insert_tree_nodes(
             continuity_critical=node.continuity_critical,
             ingestion_epoch=ingestion_epoch,
             status=tree_status,
+            content_sha256=content_hash,
             provenance=Provenance(
                 source_path=result.source.path,
                 source_checksum_sha256=result.source.checksum_sha256,
@@ -225,7 +549,7 @@ def insert_tree_nodes(
                 adapter=result.adapter,
             ),
             embedding=embedding,
-            metadata=node.metadata,
+            metadata=metadata,
             created_at=result.created_at,
             updated_at=result.created_at,
         )
@@ -1682,7 +2006,7 @@ def document_tree(db: Database, document_id: str) -> list[dict]:
     object_id = ObjectId(document_id)
     nodes = list(
         db.nodes.find(
-            {"document_id": object_id, "status": {"$ne": "superseded"}},
+            {"document_id": object_id, "status": {"$nin": list(INACTIVE_RETRIEVAL_STATUSES)}},
             {
                 "_id": 1,
                 "parent_id": 1,

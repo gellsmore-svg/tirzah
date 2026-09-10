@@ -16,6 +16,10 @@ timestamp: 2026-06-19T00:00:00Z
   [ingestion pipeline](../modules/ingestion.md).
 - **`rebuild-document` / `rebuild-by-label`** — re-ingest non-destructively: a new
   ingestion epoch supersedes the prior tree rather than deleting it.
+  `--diff-only` patches only changed sections/chunks (stable node ids);
+  `--compare` prints the structural diff without applying.
+- **`show-tree --compare`** — inspect the active tree and a rebuild diff against
+  the archived source.
 - **`enqueue-inbox` / `process-next` / `process-inbox`** — the ingestion **inbox
   queue**: stage sources, then process them (one or all).
 - **`list-docs` / `show-doc`** — list ingested documents and inspect one.

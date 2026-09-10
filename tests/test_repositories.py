@@ -508,6 +508,106 @@ def test_rebuild_document_inserts_versioned_tree_and_supersedes_previous_records
     ]
 
 
+def test_targeted_rebuild_updates_changed_nodes_and_keeps_ids() -> None:
+    db = FakeDb()
+    original = IngestionResult(
+        source=SourceRef(path="source.md", kind="markdown", checksum_sha256="checksum"),
+        title="Memory",
+        summary="Vorton notes",
+        nodes=[
+            IngestedNode(node_key="root", title="Memory", text="Vorton notes", labels=["source_root"]),
+            IngestedNode(
+                node_key="section-1",
+                parent_key="root",
+                title="Vortons",
+                text="A vorton is a closed loop.",
+                labels=["source_section"],
+            ),
+            IngestedNode(
+                node_key="section-1-paragraph-1",
+                parent_key="section-1",
+                title="Vortons / paragraph 1",
+                text="A vorton is a closed loop.",
+                labels=["source_chunk"],
+            ),
+        ],
+        created_at=datetime(2026, 5, 30, 12, tzinfo=timezone.utc),
+    )
+    inserted = commit_ingestion(db, original, embedder=FakeEmbedder())
+    root_id = db.nodes.rows[0]["_id"]
+    section_id = db.nodes.rows[1]["_id"]
+    chunk_id = db.nodes.rows[2]["_id"]
+    tree_id = db.trees.rows[0]["_id"]
+
+    rebuilt = IngestionResult(
+        source=SourceRef(path="source.md", kind="markdown", checksum_sha256="checksum-2"),
+        title="Memory",
+        summary="Vorton notes",
+        nodes=[
+            IngestedNode(node_key="root", title="Memory", text="Vorton notes", labels=["source_root"]),
+            IngestedNode(
+                node_key="section-1",
+                parent_key="root",
+                title="Vortons",
+                text="A vorton is a closed loop of superconducting cosmic string.",
+                labels=["source_section"],
+            ),
+            IngestedNode(
+                node_key="section-1-paragraph-1",
+                parent_key="section-1",
+                title="Vortons / paragraph 1",
+                text="A vorton is a closed loop of superconducting cosmic string.",
+                labels=["source_chunk"],
+            ),
+        ],
+        ingestion_epoch="2026-09-10-diff",
+        created_at=datetime(2026, 9, 10, 12, tzinfo=timezone.utc),
+    )
+    result = rebuild_document(db, inserted["document_id"], rebuilt, embedder=FakeEmbedder(), mode="diff")
+
+    assert result["applied"] is True
+    assert result["preserved_node_count"] == 1
+    assert result["updated_node_count"] == 2
+    assert result["added_node_count"] == 0
+    assert result["removed_node_count"] == 0
+    assert result["embedded_node_count"] == 2
+    assert len(db.trees.rows) == 1
+    assert db.trees.rows[0]["_id"] == tree_id
+    assert {row["_id"] for row in db.nodes.rows} == {root_id, section_id, chunk_id}
+    chunk = next(row for row in db.nodes.rows if row["_id"] == chunk_id)
+    assert chunk["text"].startswith("A vorton is a closed loop of superconducting")
+    assert chunk["ingestion_epoch"] == "2026-09-10-diff"
+    root = next(row for row in db.nodes.rows if row["_id"] == root_id)
+    assert root["text"] == "Vorton notes"
+
+
+def test_compare_rebuild_does_not_mutate_tree() -> None:
+    db = FakeDb()
+    original = IngestionResult(
+        source=SourceRef(path="source.md", kind="markdown", checksum_sha256="checksum"),
+        title="Memory",
+        summary="notes",
+        nodes=[IngestedNode(node_key="root", title="Memory", text="notes", labels=["source_root"])],
+        created_at=datetime(2026, 5, 30, 12, tzinfo=timezone.utc),
+    )
+    inserted = commit_ingestion(db, original, embedder=FakeEmbedder())
+    snapshot = [dict(row) for row in db.nodes.rows]
+    proposed = IngestionResult(
+        source=SourceRef(path="source.md", kind="markdown", checksum_sha256="checksum"),
+        title="Memory",
+        summary="notes changed",
+        nodes=[IngestedNode(node_key="root", title="Memory", text="notes changed", labels=["source_root"])],
+        created_at=datetime(2026, 9, 10, 12, tzinfo=timezone.utc),
+    )
+    compared = rebuild_document(
+        db, inserted["document_id"], proposed, embedder=FakeEmbedder(), compare_only=True
+    )
+    assert compared["compare_only"] is True
+    assert compared["applied"] is False
+    assert compared["diff"]["counts"]["changed"] == 1
+    assert db.nodes.rows == snapshot
+
+
 def test_document_tree_returns_only_active_nodes() -> None:
     document_id = ObjectId()
     active_id = ObjectId()

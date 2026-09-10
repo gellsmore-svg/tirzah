@@ -114,6 +114,7 @@ class NodeRecord(BaseModel):
     continuity_critical: bool = False
     ingestion_epoch: str
     status: str = "active"
+    content_sha256: str = ""
     provenance: Provenance
     embedding: dict[str, Any] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

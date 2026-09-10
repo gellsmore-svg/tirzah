@@ -1817,6 +1817,35 @@ def test_endorse_node_endpoint(monkeypatch) -> None:
     }
 
 
+def test_rebuild_diff_and_rebuild_document_endpoints(monkeypatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(
+        "tirzah.cli.rebuild_document_from_existing_source",
+        lambda _db, document_id, source=None, ingestion_epoch=None, runtime_config=None, mode="full", compare_only=False: {
+            "ok": True,
+            "document_id": document_id,
+            "mode": "diff" if compare_only or mode == "diff" else mode,
+            "compare_only": compare_only,
+            "source": source,
+            "ingestion_epoch": ingestion_epoch,
+        },
+    )
+
+    preview = client.get("/api/documents/doc1/rebuild-diff")
+    assert preview.status_code == 200
+    assert preview.json()["compare_only"] is True
+    assert preview.json()["document_id"] == "doc1"
+
+    applied = client.post(
+        "/api/rebuild-document",
+        json={"document_id": "doc1", "mode": "diff", "source": "/tmp/source.md"},
+    )
+    assert applied.status_code == 200
+    assert applied.json()["mode"] == "diff"
+    assert applied.json()["source"] == "/tmp/source.md"
+    assert applied.json()["compare_only"] is False
+
+
 def test_proposed_ingestion_review_endpoints(monkeypatch) -> None:
     client = TestClient(app)
     monkeypatch.setattr(

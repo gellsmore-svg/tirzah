@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Targeted rebuilds:** `rebuild-document --diff-only` (and `rebuild-by-label`)
+  patches only changed sections/chunks in the active tree, keeps stable node
+  ids, and skips re-embedding unchanged text. `--compare` and
+  `show-tree --compare` print the structural diff without applying it. Web:
+  `GET /api/documents/{id}/rebuild-diff` and `POST /api/rebuild-document`
+  with `mode=diff`. Nodes now stamp `content_sha256` at ingest.
 - **LLM-assisted ingestion (review-gated):** `runtime.ingestion_adapter: llm`
   proposes `source_root` / `source_section` / `source_chunk` trees via a model
   while keeping the mock adapter as the default. Proposed trees commit as

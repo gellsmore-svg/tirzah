@@ -56,7 +56,13 @@ that are themselves endorsed.
 - Update provenance on changed nodes while preserving stable node identities where possible.
 - Surface the diff in both CLI (`show-tree --compare`) and web developer view.
 
-**Priority:** High
+**Priority:** High — **implemented.** Default rebuild remains a versioned full
+tree supersede. `rebuild-document --diff-only` / `mode=diff` matches by
+`node_key`, content hash, then title; updates changed nodes in place, inserts
+additions, supersedes removals, and preserves `_id`s. `--compare` /
+`show-tree --compare` / `GET /api/documents/{id}/rebuild-diff` preview the
+diff. Remaining: richer web developer visualization and checksums stored as a
+separate hash-tree collection for very large corpora.
 **Related:** `src/tirzah/cli.py:rebuild_document_from_existing_source`, `src/tirzah/db/repositories.py:rebuild_document`, `ingestion_epoch` handling, `docs/build-roadmap.md` (version comparison gap).
 
 ### 1.3 Richer Metadata Extraction and Chronological Intelligence

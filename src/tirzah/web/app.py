@@ -183,6 +183,14 @@ class ReviewIngestionTreeRequest(BaseModel):
     endorsement: str | None = None
 
 
+class RebuildDocumentRequest(BaseModel):
+    document_id: str
+    source: str | None = None
+    ingestion_epoch: str | None = None
+    mode: str = "full"
+    compare_only: bool = False
+
+
 class ReviewSemanticEdgeCandidateRequest(BaseModel):
     candidate_id: str
     action: str
@@ -552,6 +560,32 @@ def create_app() -> FastAPI:
     @app.get("/api/documents")
     def documents(limit: int = 10) -> dict[str, Any]:
         return {"ok": True, "documents": list_documents(db, limit=limit)}
+
+    @app.get("/api/documents/{document_id}/rebuild-diff")
+    def document_rebuild_diff(document_id: str) -> dict[str, Any]:
+        from tirzah.cli import rebuild_document_from_existing_source
+
+        return rebuild_document_from_existing_source(
+            db,
+            document_id,
+            runtime_config=config.runtime,
+            compare_only=True,
+        )
+
+    @app.post("/api/rebuild-document")
+    def rebuild_document_endpoint(request: RebuildDocumentRequest) -> dict[str, Any]:
+        from tirzah.cli import rebuild_document_from_existing_source
+
+        mode = request.mode if request.mode in {"full", "diff"} else "full"
+        return rebuild_document_from_existing_source(
+            db,
+            request.document_id,
+            request.source,
+            ingestion_epoch=request.ingestion_epoch,
+            runtime_config=config.runtime,
+            mode=mode,
+            compare_only=request.compare_only,
+        )
 
     @app.get("/api/sessions")
     def sessions(limit: int = 20) -> dict[str, Any]:

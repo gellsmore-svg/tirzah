@@ -313,6 +313,9 @@ def rebuild_document_from_existing_source(
     source_override: str | None = None,
     ingestion_epoch: str | None = None,
     runtime_config: RuntimeConfig | None = None,
+    *,
+    mode: str = "full",
+    compare_only: bool = False,
 ) -> dict:
     document = get_document(db, document_id)
     if not document:
@@ -348,7 +351,13 @@ def rebuild_document_from_existing_source(
     result.source.checksum_sha256 = source.get("checksum_sha256") or sha256_file(source_path)
     result.source.archive_path = source.get("archive_path") or str(source_path)
     result.ingestion_epoch = ingestion_epoch
-    inserted = rebuild_document(db, document_id, result)
+    inserted = rebuild_document(
+        db,
+        document_id,
+        result,
+        mode=mode,
+        compare_only=compare_only,
+    )
     inserted["ok"] = True
     inserted["source_path"] = str(source_path)
     inserted["checksum_sha256"] = result.source.checksum_sha256
@@ -1207,6 +1216,11 @@ def main() -> None:
 
     show_tree = _add_cmd(subcommands, "show-tree")
     show_tree.add_argument("document_id")
+    show_tree.add_argument(
+        "--compare",
+        action="store_true",
+        help="Diff the active tree against a fresh parse of the archived source.",
+    )
 
     ingest_one = _add_cmd(subcommands, "ingest-one")
     ingest_one.add_argument("path")
@@ -1264,6 +1278,16 @@ def main() -> None:
         default=None,
         help="Optional epoch identifier to stamp on replacement trees/nodes.",
     )
+    rebuild_doc.add_argument(
+        "--diff-only",
+        action="store_true",
+        help="Update only changed sections/chunks in the active tree; keep stable node ids.",
+    )
+    rebuild_doc.add_argument(
+        "--compare",
+        action="store_true",
+        help="Print the structural diff without applying a rebuild.",
+    )
 
     rebuild_by_label = _add_cmd(subcommands, "rebuild-by-label")
     rebuild_by_label.add_argument("--label", required=True)
@@ -1272,6 +1296,16 @@ def main() -> None:
         "--force-replace",
         action="store_true",
         help="Deprecated compatibility flag. Rebuilds are versioned and non-destructive.",
+    )
+    rebuild_by_label.add_argument(
+        "--diff-only",
+        action="store_true",
+        help="Update only changed sections/chunks in each active tree; keep stable node ids.",
+    )
+    rebuild_by_label.add_argument(
+        "--compare",
+        action="store_true",
+        help="Print structural diffs without applying rebuilds.",
     )
     rebuild_by_label.add_argument(
         "--ingestion-epoch",
@@ -2422,7 +2456,19 @@ def main() -> None:
 
     if args.command == "show-tree":
         ensure_indexes(db)
-        print(json.dumps({"ok": True, "nodes": document_tree(db, args.document_id)}, indent=2))
+        payload = {"ok": True, "nodes": document_tree(db, args.document_id)}
+        if args.compare:
+            compared = rebuild_document_from_existing_source(
+                db,
+                args.document_id,
+                runtime_config=config.runtime,
+                compare_only=True,
+            )
+            payload["compare"] = compared.get("diff")
+            payload["compare_ok"] = compared.get("ok")
+            if compared.get("reason"):
+                payload["compare_reason"] = compared["reason"]
+        print(json.dumps(payload, indent=2))
         return
 
     if args.command == "queue-recent":
@@ -2554,6 +2600,8 @@ def main() -> None:
                     args.source,
                     ingestion_epoch=args.ingestion_epoch,
                     runtime_config=config.runtime,
+                    mode="diff" if args.diff_only else "full",
+                    compare_only=args.compare,
                 ),
                 indent=2,
             )
@@ -2571,6 +2619,8 @@ def main() -> None:
                 document_id,
                 ingestion_epoch=args.ingestion_epoch,
                 runtime_config=config.runtime,
+                mode="diff" if args.diff_only else "full",
+                compare_only=args.compare,
             )
             for document_id in document_ids
         ]
