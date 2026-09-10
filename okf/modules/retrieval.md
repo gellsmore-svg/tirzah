@@ -14,6 +14,7 @@ timestamp: 2026-06-19T00:00:00Z
   `query_embedding` for [hybrid](../concepts/hybrid-and-semantic.md) ranking),
   `hybrid_rank` / `merge_candidate_pools` / `attach_query_similarity`,
   budget-aware skip summaries in `render_context_document`,
+  query reformulation (`reformulate.py`: stems, typos, synonyms),
   `query_embedding_candidate_nodes` (semantic search), `node_context` /
   `expand_graph_paths` (neighbourhood + traversal), and the
   [context-compilation](../concepts/context-compilation.md) helpers.

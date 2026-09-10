@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Query reformulation:** near-match fallback now includes light stemming,
+  1-edit typo candidates, and vocabulary-gated synonyms. Original vs
+  reformulated query is recorded in query assembly and search-tool traces.
+  Thresholds are configurable (`near_match_min_score`, `near_match_per_term`,
+  `weak_match_fallback_score`).
 - **Budget skip summaries:** when `render_context_document` omits records for
   char budget, it appends a provenance-tagged skip appendix using stored node
   summaries or a derived extractive fallback. `set-node-summary` /

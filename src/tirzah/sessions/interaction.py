@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +19,13 @@ from tirzah.domains.registry import (
     conversation_domain_id_for_session,
 )
 from tirzah.retrieval.deep import run_deep_answer
+from tirzah.retrieval.reformulate import (
+    DEFAULT_NEAR_MATCH_MAX_CANDIDATES,
+    DEFAULT_NEAR_MATCH_PER_TERM,
+    enrich_query_assembly,
+    fallback_queries as reformulated_fallback_queries,
+    near_match_terms as reformulated_near_match_terms,
+)
 from tirzah.retrieval.queries import (
     build_prompt_envelope,
     build_prompt_envelope_without_context,
@@ -1855,6 +1861,8 @@ def summarize_tool_results_for_memory_agent(tool_results: list[dict[str, Any]]) 
                     "exact_phrases": query_assembly.get("exact_phrases") or [],
                     "anchor_terms": query_assembly.get("anchor_terms") or [],
                     "near_match_terms": query_assembly.get("near_match_terms") or [],
+                    "reformulated_query": query_assembly.get("reformulated_query"),
+                    "original_query": query_assembly.get("original_query"),
                 }
             fallback_queries = compact_fallback_query_details(
                 details.get("fallback_queries") or []
@@ -1979,7 +1987,13 @@ def compact_edge_summary(edge: dict[str, Any]) -> dict[str, Any]:
 def query_assembly_has_values(assembly: dict[str, Any]) -> bool:
     return any(
         assembly.get(key)
-        for key in ["lexical_terms", "exact_phrases", "anchor_terms", "near_match_terms"]
+        for key in [
+            "lexical_terms",
+            "exact_phrases",
+            "anchor_terms",
+            "near_match_terms",
+            "reformulated_query",
+        ]
     )
 
 
@@ -2366,6 +2380,19 @@ def graph_edge_direction(value: Any) -> str:
     return "both"
 
 
+def reformulation_kwargs(runtime_config: Any | None) -> dict[str, Any]:
+    if runtime_config is None:
+        return {}
+    kwargs = {}
+    if getattr(runtime_config, "near_match_min_score", None) is not None:
+        kwargs["min_score"] = runtime_config.near_match_min_score
+    if getattr(runtime_config, "near_match_per_term", None) is not None:
+        kwargs["per_term"] = runtime_config.near_match_per_term
+    if getattr(runtime_config, "near_match_max_candidates", None) is not None:
+        kwargs["near_match_limit"] = runtime_config.near_match_max_candidates
+    return kwargs
+
+
 def fallback_candidate_limit(result_limit: int) -> int:
     return max(result_limit * 4, 20)
 
@@ -2412,7 +2439,8 @@ def execute_search_nodes_tool(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     cleaned_query = normalize_query_text(query)
     ranking_query = combined_query_text(cleaned_query, original_query)
-    query_assembly = build_query_assembly(cleaned_query, original_query)
+    reform_kwargs = reformulation_kwargs(runtime_config)
+    query_assembly = build_query_assembly(cleaned_query, original_query, **reform_kwargs)
     query_embedding = build_query_embedding(runtime_config, ranking_query)
     identity = first_active_agent_identity(db) if session_id else None
     identity_excluded_count = 0
@@ -2460,13 +2488,15 @@ def execute_search_nodes_tool(
         "normalized_query": cleaned_query,
         "ranking_query": ranking_query,
         "query_assembly": query_assembly,
+        "reformulated_query": query_assembly.get("reformulated_query"),
         "fallback_queries": [],
         "active_identity_id": identity.get("identity_id") if identity else None,
         "identity_excluded_count": identity_excluded_count,
         "identity_exclusion_sample_size": identity_exclusion_sample_size,
     }
     fallback_trigger = None
-    if ranking_query and weak_match_fallback_needed(matches, query_assembly):
+    weak_threshold = getattr(runtime_config, "weak_match_fallback_score", WEAK_MATCH_FALLBACK_SCORE)
+    if ranking_query and weak_match_fallback_needed(matches, query_assembly, threshold=weak_threshold):
         fallback_trigger = "empty_results" if not matches else "weak_matches"
         query_assembly = build_query_assembly(
             cleaned_query,
@@ -2474,10 +2504,12 @@ def execute_search_nodes_tool(
             vocabulary=near_match_vocabulary(db, session_id=session_id)
             if session_id
             else near_match_vocabulary(db),
+            **reform_kwargs,
         )
         details["query_assembly"] = query_assembly
+        details["reformulated_query"] = query_assembly.get("reformulated_query")
         details["fallback_trigger"] = fallback_trigger
-        details["weak_match_score_threshold"] = WEAK_MATCH_FALLBACK_SCORE
+        details["weak_match_score_threshold"] = weak_threshold
         seen = {row["node_id"] for row in matches}
         for fallback_query in fallback_queries(query_assembly):
             fallback_results = search_nodes_with_optional_identity(
@@ -2738,6 +2770,9 @@ def build_query_assembly(
     query: str | None,
     original_query: str | None = None,
     vocabulary: list[str] | None = None,
+    min_score: float | None = None,
+    per_term: int | None = None,
+    near_match_limit: int | None = None,
 ) -> dict[str, Any]:
     ranking_query = combined_query_text(query, original_query)
     if not ranking_query:
@@ -2762,13 +2797,20 @@ def build_query_assembly(
         for term in re.findall(r"\b[A-Z][A-Za-z0-9]{3,}\b", ranking_query)
         if term.lower() not in QUERY_STOPWORDS
     )
-    return {
-        "ranking_query": ranking_query,
-        "lexical_terms": lexical_terms,
-        "exact_phrases": exact_phrases,
-        "anchor_terms": anchor_terms,
-        "near_match_terms": near_match_terms(lexical_terms, vocabulary or []),
-    }
+    return enrich_query_assembly(
+        {
+            "original_query": query,
+            "ranking_query": ranking_query,
+            "lexical_terms": lexical_terms,
+            "exact_phrases": exact_phrases,
+            "anchor_terms": anchor_terms,
+            "near_match_terms": [],
+        },
+        vocabulary or [],
+        min_score=min_score if min_score is not None else NEAR_MATCH_MIN_SCORE,
+        per_term=per_term if per_term is not None else DEFAULT_NEAR_MATCH_PER_TERM,
+        limit=near_match_limit if near_match_limit is not None else DEFAULT_NEAR_MATCH_MAX_CANDIDATES,
+    )
 
 
 def render_query_assembly_guidance(assembly: dict[str, Any]) -> str:
@@ -2778,6 +2820,7 @@ def render_query_assembly_guidance(assembly: dict[str, Any]) -> str:
             f"- Exact phrases: {format_list_for_prompt(assembly.get('exact_phrases'))}",
             f"- Named anchors: {format_list_for_prompt(assembly.get('anchor_terms'))}",
             f"- Near-match terms: {format_near_matches_for_prompt(assembly.get('near_match_terms'))}",
+            f"- Reformulated query: {assembly.get('reformulated_query') or 'none'}",
             f"- Suggested fallback searches: {format_list_for_prompt(fallback_queries(assembly))}",
         ]
     )
@@ -2830,16 +2873,7 @@ def dedupe_preserve_order(values) -> list[str]:
 
 def fallback_queries(query: str | dict[str, Any]) -> list[str]:
     assembly = query if isinstance(query, dict) else build_query_assembly(query)
-    candidates = list(assembly.get("exact_phrases") or [])
-    candidates.extend(
-        item["candidate_term"]
-        for item in assembly.get("near_match_terms") or []
-        if isinstance(item, dict) and item.get("candidate_term")
-    )
-    candidates.extend(
-        sorted(assembly.get("lexical_terms") or [], key=len, reverse=True)
-    )
-    return dedupe_preserve_order(candidates)[:8]
+    return reformulated_fallback_queries(assembly)
 
 
 def score_node_match(row: dict[str, Any], query: str | dict[str, Any] | None) -> int:
@@ -2966,44 +3000,15 @@ def near_match_terms(
     vocabulary: list[str],
     min_score: float = NEAR_MATCH_MIN_SCORE,
     limit: int = 8,
+    per_term: int = DEFAULT_NEAR_MATCH_PER_TERM,
 ) -> list[dict[str, Any]]:
-    matches = []
-    seen = set()
-    vocabulary_by_key = {
-        term.lower(): term
-        for term in vocabulary
-        if is_query_content_term(term)
-    }
-    for source_term in source_terms:
-        source_key = source_term.lower()
-        if source_key in vocabulary_by_key:
-            continue
-        best_candidate = None
-        best_score = 0.0
-        for candidate_key, candidate_term in vocabulary_by_key.items():
-            if abs(len(source_key) - len(candidate_key)) > 2:
-                continue
-            score = SequenceMatcher(None, source_key, candidate_key).ratio()
-            if score > best_score:
-                best_candidate = candidate_term
-                best_score = score
-        if not best_candidate or best_score < min_score:
-            continue
-        key = (source_key, best_candidate.lower())
-        if key in seen:
-            continue
-        seen.add(key)
-        matches.append(
-            {
-                "source_term": source_term,
-                "candidate_term": best_candidate,
-                "score": round(best_score, 2),
-                "reason": "near_token_match",
-            }
-        )
-        if len(matches) >= limit:
-            break
-    return matches
+    return reformulated_near_match_terms(
+        source_terms,
+        vocabulary,
+        min_score=min_score,
+        limit=limit,
+        per_term=per_term,
+    )
 
 
 def is_document_metadata_match(title: str, text: str) -> bool:

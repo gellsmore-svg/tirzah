@@ -95,6 +95,10 @@ class RuntimeConfig(_StrictModel):
     # Empty = local cosine scan fallback.
     vector_search_index: str = ""
     hybrid_vector_scan_limit: int = Field(default=500, ge=20, le=10_000)
+    near_match_min_score: float = Field(default=0.78, ge=0.5, le=1.0)
+    near_match_max_candidates: int = Field(default=8, ge=1, le=32)
+    near_match_per_term: int = Field(default=3, ge=1, le=8)
+    weak_match_fallback_score: int = Field(default=5, ge=0, le=100)
     ollama_model: str = "gemma3:1b"
     memory_agent_model: str | None = None
     ollama_format: str | None = None

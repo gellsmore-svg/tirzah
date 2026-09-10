@@ -152,7 +152,10 @@ optional model-generated summaries behind the existing adapter boundary.
 - Record the original vs. expanded/reformulated terms in the query assembly artifact and activity log.
 - Make the threshold and candidate expansion limits configurable per retrieval request.
 
-**Priority:** Medium-High
+**Priority:** Medium-High — **implemented.** Shared `retrieval/reformulate.py`
+stage adds stems, 1-edit typos, and synonym hints; both direct and agentic
+paths use it. Query assembly now has `original_query` / `reformulated_query`
+and traces expose the reformulation. Remaining: learned/domain synonym tables.
 **Related:** `src/tirzah/retrieval/queries.py`, `src/tirzah/sessions/interaction.py` query assembly, consolidated requirements "Required next improvements".
 
 ### 2.4 Configurable, Model-Aware Context and Token Budgets

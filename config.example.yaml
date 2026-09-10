@@ -24,6 +24,10 @@ runtime:
   # Optional Atlas vector index on nodes.embedding.vector; empty uses a local scan.
   # vector_search_index: ""
   # hybrid_vector_scan_limit: 500
+  # near_match_min_score: 0.78
+  # near_match_max_candidates: 8
+  # near_match_per_term: 3
+  # weak_match_fallback_score: 5
   # HTTP-backed embedding adapters are not compliant for ingestion/retrieval memory operations.
   allow_http_ingestion_adapters: false
   embedding_model: nomic-embed-text:latest

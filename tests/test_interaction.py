@@ -2106,6 +2106,8 @@ def test_memory_agent_tool_summary_includes_search_diagnostics() -> None:
         "exact_phrases": ["technical design"],
         "anchor_terms": ["Tirzah"],
         "near_match_terms": [],
+        "reformulated_query": None,
+        "original_query": None,
     }
     assert summary[0]["fallback_queries"] == [
         {"query": "technical design", "result_count": 3},
@@ -3424,7 +3426,9 @@ def test_fallback_queries_prefers_phrases_before_single_terms() -> None:
 def test_fallback_queries_tries_near_matches_before_original_single_terms() -> None:
     assembly = build_query_assembly("tecnical desgin", vocabulary=["technical", "design"])
 
+    assert fallback_queries(assembly)[0] == "technical desgin"
     assert fallback_queries(assembly) == [
+        "technical desgin",
         "tecnical desgin",
         "technical",
         "design",
