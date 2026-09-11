@@ -1,7 +1,10 @@
 """Regression tests for the 2026-09-10 review findings (GitHub #32-#66)."""
 
+import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
 from bson import ObjectId
 
 from tirzah.db.memory_store import MemoryStore
@@ -230,3 +233,119 @@ def test_ingestion_activity_report_carries_source_analysis(tmp_path) -> None:
     assert "parsed as html with the html_headings chunk strategy" in log
     assert "1 nav/footer element(s)" in log
     assert "Preformatted blocks kept verbatim: 1." in log
+
+
+# --- #35: rebuild records the checksum of the file it actually read ---------
+
+
+def test_rebuild_from_source_uses_the_current_file_checksum(monkeypatch, tmp_path) -> None:
+    import hashlib
+
+    from tirzah import cli
+
+    archive = tmp_path / "doc.md"
+    archive.write_text("# Doc\n\nedited text\n", encoding="utf-8")
+    document = {
+        "document_id": "doc",
+        "source": {"path": "doc.md", "archive_path": str(archive), "checksum_sha256": "stale"},
+    }
+    captured: dict = {}
+    monkeypatch.setattr(cli, "get_document", lambda _db, _document_id: document)
+    monkeypatch.setattr(cli, "existing_document_extra_labels", lambda _db, _document_id: [])
+    monkeypatch.setattr(
+        cli,
+        "rebuild_document",
+        lambda _db, document_id, result, **_kwargs: captured.update(
+            checksum=result.source.checksum_sha256
+        )
+        or {"document_id": document_id},
+    )
+
+    output = cli.rebuild_document_from_existing_source(None, "doc")
+
+    expected = hashlib.sha256(archive.read_bytes()).hexdigest()
+    assert captured["checksum"] == expected
+    assert output["checksum_sha256"] == expected
+
+
+# --- #32 #33 #34 end to end against real MongoDB (unique indexes enforced) ---
+
+
+def _layout(sections, *, checksum, origin=None, day=10):
+    from tirzah.models.ingestion import IngestedNode, IngestionResult, SourceRef
+
+    nodes = [IngestedNode(node_key="root", title="Doc", text=" ".join(t for _, t in sections), labels=["source_root"])]
+    for index, (title, text) in enumerate(sections, start=1):
+        key = f"section-{index}"
+        nodes.append(IngestedNode(node_key=key, parent_key="root", title=title, text=text, labels=["source_section"]))
+        nodes.append(
+            IngestedNode(
+                node_key=f"{key}-paragraph-1", parent_key=key, title=f"{title} / p1", text=text, labels=["source_chunk"]
+            )
+        )
+    origin_date, origin_source = origin or (None, None)
+    return IngestionResult(
+        source=SourceRef(
+            path="doc.md", kind="markdown", checksum_sha256=checksum,
+            origin_date=origin_date, origin_date_source=origin_source,
+        ),
+        title="Doc",
+        summary="s",
+        nodes=nodes,
+        created_at=datetime(2026, 9, day, 12, tzinfo=timezone.utc),
+    )
+
+
+@pytest.mark.real_mongo
+def test_diff_rebuilds_on_real_mongo_keep_ids_edges_and_dates() -> None:
+    from pymongo import MongoClient
+
+    from tirzah.config import load_config
+    from tirzah.db.indexes import ensure_indexes
+    from tirzah.db.repositories import (
+        commit_ingestion,
+        create_reviewed_semantic_edge,
+        rebuild_document,
+        update_document_origin_date,
+    )
+
+    client = MongoClient(load_config().mongo.uri, serverSelectionTimeoutMS=3000)
+    name = f"tirzah_review_{uuid.uuid4().hex[:12]}"
+    db = client[name]
+    try:
+        ensure_indexes(db)
+        alpha_beta = [("Alpha", "Alpha text."), ("Beta", "Beta text.")]
+        document_id = commit_ingestion(
+            db, _layout(alpha_beta, checksum="c1", origin=("2026-01-01", "file_created"))
+        )["document_id"]
+
+        def section(title):
+            return db.nodes.find_one({"title": title, "labels": "source_section", "status": "active"})
+
+        alpha, beta = section("Alpha"), section("Beta")
+        assert create_reviewed_semantic_edge(db, str(alpha["_id"]), str(beta["_id"]))["ok"]
+        db.nodes.update_one({"_id": alpha["_id"]}, {"$set": {"endorsement_label": "explicit_endorsed"}})
+        assert update_document_origin_date(db, document_id, "1998-04-05", reviewer="alice")["ok"]
+
+        # Insert a section at the top: every ordinal key shifts (E11000 bait).
+        shifted = [("New", "NNN new text."), *alpha_beta]
+        rebuild_document(
+            db, document_id, _layout(shifted, checksum="c2", origin=("2026-09-11", "file_created"), day=11),
+            mode="diff",
+        )
+        kept = db.nodes.find_one({"_id": alpha["_id"]})
+        assert (kept["title"], kept["text"], kept["endorsement_label"]) == ("Alpha", "Alpha text.", "explicit_endorsed")
+        assert kept["node_key"] == "section-2"
+        assert db.graph_edges.count_documents({"provenance.adapter": "user_review"}) == 1
+        active_dates = {node["origin_date"] for node in db.nodes.find({"document_id": ObjectId(document_id), "status": "active"})}
+        assert active_dates == {"1998-04-05"}
+
+        # Shift back: "New" is superseded and its keys are reused by Alpha/Beta.
+        rebuild_document(db, document_id, _layout(alpha_beta, checksum="c3", day=12), mode="diff")
+        assert db.nodes.find_one({"_id": alpha["_id"]})["node_key"] == "section-1"
+        assert db.graph_edges.count_documents({"provenance.adapter": "user_review"}) == 1
+        source = db.documents.find_one({"_id": ObjectId(document_id)})["source"]
+        assert source["origin_date"] == "1998-04-05"
+        assert [entry["checksum_sha256"] for entry in source["previous_checksums"]] == ["c1", "c2"]
+    finally:
+        client.drop_database(name)

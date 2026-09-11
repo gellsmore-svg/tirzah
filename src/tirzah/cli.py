@@ -360,7 +360,9 @@ def rebuild_document_from_existing_source(
     )
     annotate_source_dates(result, adapter_path, text)
     result.source.path = source.get("path") or str(source_path)
-    result.source.checksum_sha256 = source.get("checksum_sha256") or sha256_file(source_path)
+    # Always the file actually read: the stored value names the previous
+    # version (kept in source.previous_checksums by the rebuild).
+    result.source.checksum_sha256 = sha256_file(source_path)
     result.source.archive_path = source.get("archive_path") or str(source_path)
     result.ingestion_epoch = ingestion_epoch
     inserted = rebuild_document(

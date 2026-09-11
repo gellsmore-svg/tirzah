@@ -2032,11 +2032,14 @@ class FakeCollection:
             self.rows.append(row)
         return None
 
-    def replace_one(self, query, replacement):
+    def replace_one(self, query, replacement, upsert=False):
         for index, row in enumerate(self.rows):
             if matches(row, query):
                 self.rows[index] = dict(replacement)
                 break
+        else:
+            if upsert:
+                self.rows.append(dict(replacement))
         return None
 
     def update_one(self, query, update):
@@ -2118,3 +2121,295 @@ def mongo_sort_value(value):
     if value is None:
         return (0, "")
     return (1, value)
+
+
+# --- 2026-09-10 review: rebuild integrity (#32 #33 #34 #35 #47 #53 #55) -------
+
+
+def _sectioned_result(sections, *, checksum="c1", origin=None, created=None):
+    nodes = [
+        IngestedNode(
+            node_key="root",
+            title="Doc",
+            text=" ".join(text for _title, text in sections),
+            labels=["source_root"],
+        )
+    ]
+    for index, (title, text) in enumerate(sections, start=1):
+        key = f"section-{index}"
+        nodes.append(
+            IngestedNode(node_key=key, parent_key="root", title=title, text=text, labels=["source_section"])
+        )
+        nodes.append(
+            IngestedNode(
+                node_key=f"{key}-paragraph-1",
+                parent_key=key,
+                title=f"{title} / paragraph 1",
+                text=text,
+                labels=["source_chunk"],
+            )
+        )
+    origin_date, origin_source = origin or (None, None)
+    return IngestionResult(
+        source=SourceRef(
+            path="doc.md",
+            kind="markdown",
+            checksum_sha256=checksum,
+            origin_date=origin_date,
+            origin_date_source=origin_source,
+        ),
+        title="Doc",
+        summary="s",
+        nodes=nodes,
+        created_at=created or datetime(2026, 9, 10, 12, tzinfo=timezone.utc),
+    )
+
+
+def _active(db, title, label="source_section"):
+    return next(
+        row
+        for row in db.nodes.rows
+        if row["title"] == title and label in row["labels"] and row.get("status") == "active"
+    )
+
+
+def _reviewed_edges(db):
+    return [row for row in db.graph_edges.rows if (row.get("provenance") or {}).get("adapter") == "user_review"]
+
+
+ALPHA_BETA = [("Alpha", "Alpha text."), ("Beta", "Beta text.")]
+
+
+def _ingest_with_reviewed_edge(db):
+    inserted = commit_ingestion(db, _sectioned_result(ALPHA_BETA), embedder=FakeEmbedder())
+    alpha, beta = _active(db, "Alpha"), _active(db, "Beta")
+    assert create_reviewed_semantic_edge(db, str(alpha["_id"]), str(beta["_id"]))["ok"] is True
+    return inserted["document_id"], alpha, beta
+
+
+def test_targeted_noop_rebuild_keeps_reviewed_edges() -> None:
+    # #32: a byte-identical diff rebuild used to hard-delete every reviewed edge.
+    db = FakeDb()
+    document_id, alpha, beta = _ingest_with_reviewed_edge(db)
+
+    result = rebuild_document(db, document_id, _sectioned_result(ALPHA_BETA), embedder=FakeEmbedder(), mode="diff")
+
+    assert result["diff"]["counts"]["changed"] == 0
+    [edge] = _reviewed_edges(db)
+    assert (edge["source_node_id"], edge["target_node_id"]) == (alpha["_id"], beta["_id"])
+    assert result["reviewed_edge_count"] == 1
+    assert result["flagged_reviewed_edge_count"] == 0
+    assert "needs_review" not in edge
+
+
+def test_targeted_rebuild_flags_reviewed_edge_whose_endpoint_text_changed() -> None:
+    db = FakeDb()
+    document_id, _alpha, _beta = _ingest_with_reviewed_edge(db)
+
+    changed = [("Alpha", "Alpha text."), ("Beta", "Beta text, revised.")]
+    result = rebuild_document(db, document_id, _sectioned_result(changed), embedder=FakeEmbedder(), mode="diff")
+
+    [edge] = _reviewed_edges(db)
+    assert edge["needs_review"] is True
+    assert edge["needs_review_reason"] == "endpoint_content_changed"
+    assert result["flagged_reviewed_edge_count"] == 1
+
+
+def test_full_rebuild_carries_reviewed_edges_onto_new_node_ids() -> None:
+    # #32 second half: full rebuild used to leave reviewed edges on superseded ids.
+    db = FakeDb()
+    document_id, alpha, beta = _ingest_with_reviewed_edge(db)
+
+    result = rebuild_document(db, document_id, _sectioned_result(ALPHA_BETA), embedder=FakeEmbedder())
+
+    new_alpha, new_beta = _active(db, "Alpha"), _active(db, "Beta")
+    assert new_alpha["_id"] != alpha["_id"]
+    [edge] = _reviewed_edges(db)
+    assert (edge["source_node_id"], edge["target_node_id"]) == (new_alpha["_id"], new_beta["_id"])
+    assert edge["tree_id"] == new_alpha["tree_id"]
+    assert result["remapped_reviewed_edge_count"] == 1
+    assert result["orphaned_reviewed_edge_count"] == 0
+
+
+def test_targeted_rebuild_keeps_endorsement_with_its_text_when_sections_shift() -> None:
+    # #33: inserting a section at the top used to rebind Alpha's id (and its
+    # endorsement and usage) onto the new section's text.
+    db = FakeDb()
+    inserted = commit_ingestion(db, _sectioned_result(ALPHA_BETA), embedder=FakeEmbedder())
+    alpha = _active(db, "Alpha")
+    db.nodes.update_one(
+        {"_id": alpha["_id"]}, {"$set": {"endorsement_label": "explicit_endorsed", "usage_score": 42}}
+    )
+
+    shifted = [("New", "NNN new text."), *ALPHA_BETA]
+    rebuild_document(db, inserted["document_id"], _sectioned_result(shifted), embedder=FakeEmbedder(), mode="diff")
+
+    kept = next(row for row in db.nodes.rows if row["_id"] == alpha["_id"])
+    assert (kept["title"], kept["text"]) == ("Alpha", "Alpha text.")
+    assert kept["endorsement_label"] == "explicit_endorsed"
+    assert kept["usage_score"] == 42
+    new = _active(db, "New")
+    assert new["_id"] != alpha["_id"]
+    assert new["endorsement_label"] == "unreviewed"
+
+
+def test_targeted_rebuild_clears_judgements_when_node_content_changes() -> None:
+    db = FakeDb()
+    inserted = commit_ingestion(db, _sectioned_result(ALPHA_BETA), embedder=FakeEmbedder())
+    alpha = _active(db, "Alpha")
+    db.nodes.update_one(
+        {"_id": alpha["_id"]},
+        {"$set": {"endorsement_label": "explicit_endorsed", "usage_score": 42, "continuity_critical": True}},
+    )
+
+    revised = [("Alpha", "Alpha text, rewritten."), ("Beta", "Beta text.")]
+    result = rebuild_document(
+        db, inserted["document_id"], _sectioned_result(revised), embedder=FakeEmbedder(), mode="diff"
+    )
+
+    row = next(row for row in db.nodes.rows if row["_id"] == alpha["_id"])
+    assert row["text"] == "Alpha text, rewritten."
+    assert row["endorsement_label"] == "unreviewed"
+    assert row["usage_score"] == 0
+    assert row["continuity_critical"] is False
+    assert row["content_change_history"][-1]["previous_endorsement_label"] == "explicit_endorsed"
+    assert result["cleared_endorsement_count"] == 1
+
+
+def test_rebuild_keeps_operator_origin_date_history_and_homogeneous_nodes() -> None:
+    # #34: rebuild used to revert the operator's date, drop its history, and
+    # leave the document's nodes split across two origin dates.
+    db = FakeDb()
+    inserted = commit_ingestion(
+        db, _sectioned_result(ALPHA_BETA, origin=("2026-01-01", "file_created")), embedder=FakeEmbedder()
+    )
+    document_id = inserted["document_id"]
+    assert update_document_origin_date(db, document_id, "1998-04-05", reviewer="alice", note="letterhead")["ok"]
+
+    revised = [("Alpha", "Alpha text."), ("Beta", "Beta text, revised.")]
+    result = rebuild_document(
+        db,
+        document_id,
+        _sectioned_result(revised, origin=("2026-09-10", "file_created")),
+        embedder=FakeEmbedder(),
+        mode="diff",
+    )
+
+    source = db.documents.rows[0]["source"]
+    assert (source["origin_date"], source["origin_date_source"]) == ("1998-04-05", "operator")
+    assert len(source["origin_date_history"]) == 1
+    assert any(candidate.get("source") == "operator" for candidate in source["date_candidates"])
+    active = [row for row in db.nodes.rows if row.get("status") == "active"]
+    assert {row["origin_date"] for row in active} == {"1998-04-05"}
+    assert result["source_changes"]["origin_date_preserved"]["recomputed_origin_date"] == "2026-09-10"
+
+
+def test_rebuild_records_previous_checksum() -> None:
+    # #35: the stored checksum must name the current content; the old one is kept.
+    db = FakeDb()
+    inserted = commit_ingestion(db, _sectioned_result(ALPHA_BETA, checksum="c1"), embedder=FakeEmbedder())
+
+    result = rebuild_document(
+        db, inserted["document_id"], _sectioned_result(ALPHA_BETA, checksum="c2"), embedder=FakeEmbedder(), mode="diff"
+    )
+
+    source = db.documents.rows[0]["source"]
+    assert source["checksum_sha256"] == "c2"
+    assert [entry["checksum_sha256"] for entry in source["previous_checksums"]] == ["c1"]
+    assert result["source_changes"]["checksum_changed"] == {"from": "c1", "to": "c2"}
+
+
+def test_rebuild_moves_operator_summary_to_history_when_regenerating() -> None:
+    # #47: a regenerated summary used to keep the operator's provenance.
+    from tirzah.retrieval.queries import skip_summary_for_record
+
+    db = FakeDb()
+    inserted = commit_ingestion(db, _sectioned_result(ALPHA_BETA), embedder=FakeEmbedder())
+    chunk = _active(db, "Beta / paragraph 1", label="source_chunk")
+    assert update_node_summary(db, str(chunk["_id"]), "Operator gloss of beta.", reviewer="alice")["ok"]
+
+    revised = [("Alpha", "Alpha text."), ("Beta", "Beta text, revised.")]
+    result = rebuild_document(
+        db, inserted["document_id"], _sectioned_result(revised), embedder=FakeEmbedder(), mode="diff"
+    )
+
+    row = next(row for row in db.nodes.rows if row["_id"] == chunk["_id"])
+    assert row["summary_provenance"]["source"] == "derived_extractive"
+    assert row["summary_provenance"]["history"][-1]["summary"] == "Operator gloss of beta."
+    assert row["summary_provenance"]["history"][-1]["source"] == "operator"
+    assert skip_summary_for_record(row)[1] == "derived_extractive"
+    assert result["summary_provenance_reset_count"] == 1
+
+
+def test_skip_summary_does_not_attribute_rewritten_text_to_its_old_provenance() -> None:
+    from tirzah.ingestion.diff import node_content_sha256
+    from tirzah.retrieval.queries import skip_summary_for_record
+
+    stamp = {"source": "operator", "summary_sha256": node_content_sha256("Operator gloss.")}
+    assert skip_summary_for_record({"summary": "Operator gloss.", "summary_provenance": stamp})[1] == "operator"
+    assert skip_summary_for_record({"summary": "Machine extract.", "summary_provenance": stamp})[1] == "stored"
+
+
+def test_targeted_rebuild_rollback_never_mass_deletes_nodes() -> None:
+    # #53: rollback used to delete_many the whole tree, then insert_many it back.
+    db = FakeDb(fail_edges=True)
+    inserted = commit_ingestion(db, _sectioned_result(ALPHA_BETA), embedder=FakeEmbedder())
+    snapshot = {row["_id"]: dict(row) for row in db.nodes.rows}
+    rebuilt = _sectioned_result([("Alpha", "Alpha text."), ("Beta", "Beta revised."), ("Gamma", "Gamma.")])
+    rebuilt.nodes[1].relations = [{"target_node_key": "root", "relation_type": "part_of"}]
+    bulk_deletes = []
+    real_delete_many = db.nodes.delete_many
+    db.nodes.delete_many = lambda query: bulk_deletes.append(query) or real_delete_many(query)
+
+    try:
+        rebuild_document(db, inserted["document_id"], rebuilt, embedder=FakeEmbedder(), mode="diff")
+    except RuntimeError as error:
+        assert "edge insert failed" in str(error)
+    else:
+        raise AssertionError("Expected the edge insert failure to propagate.")
+
+    assert bulk_deletes == []
+    assert {row["_id"]: row for row in db.nodes.rows} == snapshot
+
+
+def test_ingestion_links_children_emitted_before_their_parent() -> None:
+    # #55: a child before its parent used to be stored with parent_id=None.
+    db = FakeDb()
+    result = IngestionResult(
+        source=SourceRef(path="x.md", kind="markdown"),
+        title="X",
+        summary="s",
+        nodes=[
+            IngestedNode(node_key="child", parent_key="root", title="Child", text="child"),
+            IngestedNode(node_key="root", title="Root", text="root"),
+        ],
+    )
+
+    commit_ingestion(db, result, embedder=FakeEmbedder())
+
+    by_key = {row["node_key"]: row for row in db.nodes.rows}
+    assert by_key["child"]["parent_id"] == by_key["root"]["_id"]
+
+
+def test_ingestion_rejects_unknown_parent_key_before_writing() -> None:
+    from tirzah.db.repositories import IngestionStructureError
+
+    db = FakeDb()
+    result = IngestionResult(
+        source=SourceRef(path="x.md", kind="markdown"),
+        title="X",
+        summary="s",
+        nodes=[
+            IngestedNode(node_key="root", title="Root", text="root"),
+            IngestedNode(node_key="orphan", parent_key="missing", title="Orphan", text="orphan"),
+        ],
+    )
+
+    try:
+        commit_ingestion(db, result, embedder=FakeEmbedder())
+    except IngestionStructureError as error:
+        assert "missing" in str(error)
+    else:
+        raise AssertionError("Expected IngestionStructureError for an unresolved parent_key.")
+    assert db.documents.rows == []
+    assert db.nodes.rows == []

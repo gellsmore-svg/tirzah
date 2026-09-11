@@ -1786,6 +1786,14 @@ def skip_summary_for_record(record: dict[str, Any], limit: int = 280) -> tuple[s
     if stored:
         provenance = record.get("summary_provenance") or {}
         source = str(provenance.get("source") or "stored")
+        recorded = provenance.get("summary_sha256")
+        if recorded:
+            from tirzah.ingestion.diff import node_content_sha256
+
+            if recorded != node_content_sha256(stored):
+                # The summary was rewritten after this provenance was stamped;
+                # do not attribute the current text to that source.
+                source = "stored"
         return stored[:limit], source
     text = str(record.get("text") or record.get("text_preview") or "").strip()
     if not text:
