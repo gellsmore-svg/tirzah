@@ -4360,6 +4360,29 @@ def test_build_query_embedding_gating(monkeypatch) -> None:
     assert interaction.build_query_embedding(enabled_real, "q") is None
 
 
+def test_query_embedding_diagnostic_separates_policy_refusal(monkeypatch) -> None:
+    # Issue #54: an HTTP-backed adapter refusal must not look like a silent degrade.
+    import tirzah.sessions.interaction as interaction
+    from tirzah.config import RuntimeConfig
+
+    blocked = RuntimeConfig(hybrid_search_enabled=True, embedding_adapter="ollama_http")
+    embedding, diagnostic = interaction.query_embedding_with_diagnostic(blocked, "q")
+    assert embedding is None
+    assert diagnostic["reason"] == "embedding_adapter_blocked"
+    assert diagnostic["fallback"] == "lexical_only"
+    assert "HTTP-backed" in diagnostic["message"]
+
+    class BoomEmbedder:
+        def embed(self, text):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(interaction, "embedding_adapter", lambda _cfg: BoomEmbedder())
+    enabled_real = RuntimeConfig(hybrid_search_enabled=True, embedding_adapter="local_command")
+    _, diagnostic = interaction.query_embedding_with_diagnostic(enabled_real, "q")
+    assert diagnostic["reason"] == "embedding_failed"
+    assert interaction.query_embedding_with_diagnostic(enabled_real, "") == (None, None)
+
+
 def test_ranked_focus_matches_forwards_query_embedding(monkeypatch) -> None:
     import tirzah.sessions.interaction as interaction
 
@@ -4405,7 +4428,11 @@ def test_answer_query_deep_mode_dispatch(monkeypatch) -> None:
             "trace": [{"step": "stop", "reason": "planner_stop"}],
         },
     )
-    monkeypatch.setattr(deep, "synthesize_answer", lambda *a, **k: "deep answer")
+    # The phased flow calls synthesize_answer_result (full adapter payload),
+    # not the str-returning synthesize_answer wrapper.
+    monkeypatch.setattr(
+        deep, "synthesize_answer_result", lambda *a, **k: {"answer": "deep answer"}
+    )
     monkeypatch.setattr(interaction, "save_exchange", lambda *a, **k: "exch-deep")
     config = AppConfig(runtime=RuntimeConfig(retrieval_mode="deep", answer_adapter="fake"))
 

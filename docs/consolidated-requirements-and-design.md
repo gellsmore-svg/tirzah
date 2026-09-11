@@ -450,7 +450,14 @@ The system needs a controlled rebuild workflow that can:
 - tag runs with ingestion epochs;
 - compare or supersede earlier generated content.
 
-Current rebuild behavior now uses ingestion epochs as the versioning surface. Maintenance rebuild commands insert a new active tree/node set and mark earlier tree/node records as `superseded` rather than deleting them. Normal search and document-tree views prefer active records. Explicit epoch comparison, audit browsing of superseded trees, and garbage collection remain open work.
+Current rebuild behavior uses ingestion epochs as the versioning surface. There are two rebuild modes with different guarantees:
+
+- **Full rebuild (default, `mode=full`).** Inserts a new active tree/node set and marks earlier tree/node records as `superseded` rather than deleting them. Node ids change. Human-reviewed semantic edges are carried onto the new node with identical content (same content hash and structural label); edges whose endpoint has no such counterpart stay on the superseded node and are flagged `needs_review`.
+- **Targeted rebuild (`rebuild-document --diff-only`, `mode=diff`).** Mutates the active tree in place and keeps node ids for matched nodes. Matching is content-first (content hash, then position, then title), so a kept id always holds the same text it held before. When a kept node's content does change, its endorsement, usage score, `last_used_at` and continuity-critical flag reset (prior values kept in `content_change_history`), and an operator summary moves into summary history. Machine-generated graph edges for the tree are deleted and regenerated; human-reviewed edges are never deleted, and are flagged `needs_review` when an endpoint changed or was superseded. Removed nodes are marked `superseded`.
+
+Both modes merge source metadata rather than replacing it: an operator-reviewed origin date survives, `origin_date_history` and operator date candidates are kept, every active node is restamped so the document has one chronology, the stored checksum is recomputed from the file actually read (the previous one goes to `source.previous_checksums`), and origin-date or checksum changes are reported in `source_changes`. Rollback on failure is non-destructive (only rows the failed write added are deleted; every prior row is restored in place) but is not a MongoDB transaction; see `docs/v1-known-limitations.md`.
+
+Normal search and document-tree views prefer active records. Explicit epoch comparison, audit browsing of superseded trees, and garbage collection remain open work.
 
 ### Chronological Corpus Processing
 
@@ -567,7 +574,7 @@ Each semantic object should support:
 - confidence weighting;
 - contextual persistence weighting.
 
-Current trust/temporal diagnostics are explanatory and visible in retrieval traces. They do not yet affect retrieval ranking.
+Trust/temporal diagnostics are visible in retrieval traces. By default they do not affect ranking. With `runtime.trust_ranking_enabled` (opt-in, off by default) they re-rank the pre-truncation candidate pool as a bounded secondary signal, scored from the stored node (explicit trust score, verification flags, origin/created dates). The seeded `default_balanced` profile uses a 1825-day decay half-life so recency participates; undated nodes get neutral recency, and each ranked row reports `temporal_decay_active`.
 
 ## Internet-Assisted Reasoning Requirements
 

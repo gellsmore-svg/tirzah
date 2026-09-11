@@ -2,7 +2,9 @@ from datetime import datetime, timezone
 
 from bson import ObjectId
 
+from tirzah.db.memory_store import MemoryStore
 from tirzah.retrieval.trust import (
+    NEUTRAL_RECENCY,
     apply_trust_ranking,
     temporal_recency_component,
     trust_temporal_diagnostic,
@@ -179,6 +181,121 @@ def test_temporal_recency_component_handles_naive_mongo_datetimes() -> None:
     now = datetime(2026, 1, 11, tzinfo=timezone.utc)
 
     assert temporal_recency_component(datetime(2026, 1, 1), 10, now) == 0.5
+
+
+def test_temporal_recency_component_parses_iso_strings_and_neutralises_undated() -> None:
+    # Issue #40: serialized rows carry ISO strings, and undated nodes used to score 1.0.
+    now = datetime(2026, 1, 11, tzinfo=timezone.utc)
+    assert temporal_recency_component("2026-01-01T00:00:00+00:00", 10, now) == 0.5
+    assert temporal_recency_component(None, 10, now) == NEUTRAL_RECENCY
+    assert temporal_recency_component("not a date", 10, now) == NEUTRAL_RECENCY
+    assert temporal_recency_component(None, None, now) == 1.0
+
+
+def _stored_node(title: str, text: str, **extra) -> dict:
+    return {
+        "_id": ObjectId(),
+        "document_id": ObjectId(),
+        "tree_id": ObjectId(),
+        "parent_id": None,
+        "title": title,
+        "text": text,
+        "labels": ["source_chunk"],
+        "endorsement_label": "unreviewed",
+        "usage_score": 0,
+        "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        **extra,
+    }
+
+
+def test_search_trust_ranking_reads_trust_signals_from_stored_nodes() -> None:
+    # Issue #40: serialize_node omits trust_score/verification flags, so the
+    # ranker used to see every row as neutral and apply a zero boost.
+    from tirzah.db.memory_store import as_memory_store
+    from tirzah.retrieval.queries import apply_search_trust_ranking, serialize_node
+
+    distrusted = _stored_node("A", "text", trust_score=0.05, verification_required=True)
+    neutral = _stored_node("B", "text")
+    rows = [{**serialize_node(node), "lexical_score": 10} for node in (distrusted, neutral)]
+    assert "trust_score" not in rows[0]
+
+    ranked = apply_search_trust_ranking(
+        as_memory_store(FakeDb(nodes=[distrusted, neutral], profiles=[])),
+        rows,
+        enabled=True,
+        profile_id=None,
+        weight=1.0,
+        max_boost=20,
+        hybrid_weight=0.15,
+    )
+    by_id = {row["node_id"]: row["trust_ranking"] for row in ranked}
+    assert by_id[str(distrusted["_id"])]["components"]["trust"] == 0.05
+    assert by_id[str(distrusted["_id"])]["trust_boost"] < 0
+    assert [row["node_id"] for row in ranked] == [str(neutral["_id"]), str(distrusted["_id"])]
+
+
+class _PoolStore(MemoryStore):
+    """Returns its whole node list for any filter (honours `_id $in` and limit)."""
+
+    def __init__(self, nodes):
+        super().__init__(db=None)
+        self.pool = nodes
+
+    def find_nodes(self, filters, *, sort=None, limit=None):
+        wanted = filters.get("_id", {}).get("$in") if isinstance(filters.get("_id"), dict) else None
+        rows = [node for node in self.pool if wanted is None or node["_id"] in wanted]
+        return rows if limit is None else rows[:limit]
+
+
+def test_search_nodes_trust_ranking_can_promote_from_beyond_limit() -> None:
+    # Issue #42: re-ranking after truncation could never bring a trusted node in.
+    from tirzah.retrieval.queries import search_nodes
+
+    decoys = [
+        _stored_node(f"Vorton vorton {index}", "vorton vorton vorton", trust_score=0.0)
+        for index in range(10)
+    ]
+    trusted = _stored_node("Note", "a note that mentions vorton once", trust_score=1.0)
+    store = _PoolStore([*decoys, trusted])
+
+    # Lexical: decoys 80, trusted 22 — a boost wide enough to close that gap
+    # isolates the truncation question from boost calibration.
+    off = search_nodes(store, query="vorton", limit=5, trust_ranking_max_boost=60)
+    on = search_nodes(
+        store, query="vorton", limit=5, trust_ranking_enabled=True, trust_ranking_max_boost=60
+    )
+
+    assert str(trusted["_id"]) not in [row["node_id"] for row in off]
+    assert len(on) == 5
+    assert on[0]["node_id"] == str(trusted["_id"])
+
+
+def test_seeded_default_profile_makes_recency_participate() -> None:
+    # Issue #41: the only seeded profile had no half-life, so temporal was constant.
+    from tirzah.db.indexes import DEFAULT_TRUST_WEIGHTING_PROFILES
+
+    profile = DEFAULT_TRUST_WEIGHTING_PROFILES[0]
+    now = datetime(2026, 9, 11, tzinfo=timezone.utc)
+    old = trust_temporal_diagnostic({"origin_date": "1990-01-01"}, profile=profile, now=now)
+    new = trust_temporal_diagnostic({"origin_date": "2026-09-01"}, profile=profile, now=now)
+    assert new["components"]["recency"] > old["components"]["recency"]
+    assert new["score"] > old["score"]
+    ranked = apply_trust_ranking([{"node_id": "a", "lexical_score": 1}], enabled=True, profile=profile)
+    assert ranked[0]["trust_ranking"]["temporal_decay_active"] is True
+
+
+def test_apply_trust_ranking_normalises_mixed_hybrid_and_lexical_pools() -> None:
+    # Issue #56: a lexical row (score 20) must not outrank a hybrid row (0.95)
+    # just because the two scales were sorted together.
+    rows = [
+        {"node_id": "h", "hybrid_score": 0.95, "lexical_score": 40, "endorsement_label": "unreviewed"},
+        {"node_id": "l", "lexical_score": 20, "endorsement_label": "unreviewed"},
+    ]
+    ranked = apply_trust_ranking(rows, enabled=True)
+    assert [row["node_id"] for row in ranked] == ["h", "l"]
+    scales = {row["node_id"]: row["trust_ranking"]["score_scale"] for row in ranked}
+    assert scales == {"h": "hybrid", "l": "lexical_normalized"}
+    assert ranked[1]["trust_ranking"]["ranking_score_after"] < 1.2
 
 
 class FakeCursor(list):

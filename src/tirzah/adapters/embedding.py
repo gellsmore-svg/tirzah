@@ -16,6 +16,11 @@ DEFAULT_OLLAMA_EMBEDDING_MODEL = "nomic-embed-text:latest"
 HTTP_BACKED_EMBEDDING_ADAPTERS = {"ollama_http", "ollama_powershell"}
 
 
+class EmbeddingAdapterPolicyError(ValueError):
+    """The configured embedding adapter is refused by policy (e.g. HTTP-backed),
+    as distinct from a transient embedding failure."""
+
+
 class MockEmbeddingAdapter:
     """Deterministic, dependency-free embedding adapter.
 
@@ -388,7 +393,7 @@ def embedding_adapter(
         "allow_http_ingestion_adapters",
         False,
     ):
-        raise ValueError(
+        raise EmbeddingAdapterPolicyError(
             f"Embedding adapter '{name}' is HTTP-backed and is not allowed for "
             "ingestion or retrieval memory operations. Use a local non-HTTP "
             "embedding adapter, or set allow_http_ingestion_adapters only for "

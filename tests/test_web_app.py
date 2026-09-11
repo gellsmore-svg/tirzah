@@ -2280,6 +2280,7 @@ def test_enqueue_vector_semantic_batch_endpoint(monkeypatch) -> None:
         "candidate_scan_limit": 500,
         "exclude_node_keys": ["section-1"],
         "dry_run": True,
+        "after_node_id": None,
     }
 
 
@@ -2388,6 +2389,7 @@ def test_enqueue_contradiction_batch_endpoint(monkeypatch) -> None:
         "candidate_scan_limit": 400,
         "exclude_node_keys": ["section-1"],
         "dry_run": True,
+        "after_node_id": None,
     }
 
 

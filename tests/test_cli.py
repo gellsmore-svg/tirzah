@@ -1753,7 +1753,7 @@ def test_embedding_smoke_payload_reports_disallowed_http_adapter() -> None:
     assert output["ok"] is False
     assert output["adapter"] == "ollama_http"
     assert output["model"] == "nomic-embed-text:latest"
-    assert output["error_type"] == "ValueError"
+    assert output["error_type"] == "EmbeddingAdapterPolicyError"
     assert "HTTP-backed" in output["error"]
 
 
@@ -2104,6 +2104,7 @@ def test_cli_enqueue_vector_semantic_batch_command(monkeypatch, capsys) -> None:
         "candidate_scan_limit": 500,
         "exclude_node_keys": ["section-1"],
         "dry_run": True,
+        "after_node_id": None,
     }
 
 
@@ -2163,6 +2164,7 @@ def test_cli_enqueue_profile_semantic_batch_alias(monkeypatch, capsys) -> None:
         "candidate_scan_limit": 500,
         "exclude_node_keys": ["section-1"],
         "dry_run": True,
+        "after_node_id": None,
     }
 
 
@@ -2394,6 +2396,7 @@ def test_cli_enqueue_contradiction_batch_command(monkeypatch, capsys) -> None:
         "candidate_scan_limit": 400,
         "exclude_node_keys": ["section-1"],
         "dry_run": True,
+        "after_node_id": None,
     }
 
 

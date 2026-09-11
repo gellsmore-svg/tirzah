@@ -58,8 +58,13 @@ that are themselves endorsed.
 
 **Priority:** High — **implemented.** Default rebuild remains a versioned full
 tree supersede. `rebuild-document --diff-only` / `mode=diff` matches by
-`node_key`, content hash, then title; updates changed nodes in place, inserts
-additions, supersedes removals, and preserves `_id`s. `--compare` /
+content hash, then `node_key`, then title; updates changed nodes in place,
+inserts additions, supersedes removals, and preserves `_id`s for matched nodes.
+**Design decision (2026-09-11):** the earlier `node_key`-first order is
+retired. Node keys are ordinal (`section-N`), so inserting a section rebound a
+kept id, together with its endorsement and usage score, onto different text.
+Content identity now beats position. When a kept node's content does change,
+human judgements (endorsement, usage, continuity-critical) reset. `--compare` /
 `show-tree --compare` / `GET /api/documents/{id}/rebuild-diff` preview the
 diff. Remaining: richer web developer visualization and checksums stored as a
 separate hash-tree collection for very large corpora.
@@ -99,8 +104,12 @@ date as a graph-edge signal and document-type classification.
 **Priority:** Medium — **implemented.** `SUPPORTED_SUFFIXES` now includes HTML,
 common code extensions, JSON/YAML, and CSV. Structure extraction lives in
 `ingestion/formats.py` and still emits `source_root` / `source_section` /
-`source_chunk`. Raw files are archived unchanged; HTML chrome/scripts and
-Markdown front matter are stripped only from the parsed tree. Remaining:
+`source_chunk`. Raw files are archived unchanged. The parsed tree, which
+retrieval and answers consume, omits HTML nav/footer and script/style content
+and Markdown front matter. Every such transformation is counted in the
+ingestion activity report (`source_analysis`). `<pre>` whitespace, full
+marked-up headings, and CSV cells past the header count are preserved, and
+large CSVs are chunked into 50-row sections. Remaining:
 richer language grammars and binary/office formats.
 **Related:** `src/tirzah/ingestion/parser.py`, `src/tirzah/ingestion/files.py`, web upload paths.
 

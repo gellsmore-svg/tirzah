@@ -255,3 +255,42 @@ def test_mermaid_escapes_quotes_in_titles() -> None:
     }
     mermaid = render_graph_explore_mermaid(report)
     assert '["Say \'hello\'"]' in mermaid
+
+
+def _hub_db():
+    focus_id, a_id, b_id = ObjectId(), ObjectId(), ObjectId()
+    a_neighbors = [ObjectId() for _ in range(5)]
+    b_neighbors = [ObjectId() for _ in range(3)]
+    nodes = [_node(focus_id, "Focus"), _node(a_id, "A"), _node(b_id, "B")]
+    nodes += [_node(node_id, f"a{index}") for index, node_id in enumerate(a_neighbors)]
+    nodes += [_node(node_id, f"b{index}") for index, node_id in enumerate(b_neighbors)]
+    edges = [
+        {"_id": ObjectId(), "source_node_id": source, "target_node_id": target, "relation_type": "related_to"}
+        for source, targets in ((focus_id, [a_id, b_id]), (a_id, a_neighbors), (b_id, b_neighbors))
+        for target in targets
+    ]
+    return FakeDb(nodes, edges), focus_id, b_id
+
+
+def test_graph_neighborhood_branch_limit_is_per_node_and_counts_drops() -> None:
+    # Issue #51: the cap was global per hop, so the first hop-1 node filled it
+    # and later ones contributed ~nothing, with exclusions all zero.
+    db, focus_id, b_id = _hub_db()
+
+    report = graph_neighborhood(db, str(focus_id), max_depth=2, direction="outgoing", branch_limit=2, limit=50)
+
+    hop2_from_b = [
+        edge for edge in report["edges"] if edge["hop"] == 2 and edge["source_node_id"] == str(b_id)
+    ]
+    assert len(hop2_from_b) == 2
+    assert len([edge for edge in report["edges"] if edge["hop"] == 2]) == 4
+    assert report["diagnostics"]["exclusions"]["branch_limit"] == 4  # 3 of A's + 1 of B's
+
+
+def test_graph_neighborhood_counts_node_limit_drops() -> None:
+    db, focus_id, _b_id = _hub_db()
+
+    report = graph_neighborhood(db, str(focus_id), max_depth=2, direction="outgoing", branch_limit=8, limit=3)
+
+    assert len(report["nodes"]) == 4  # focus + limit
+    assert report["diagnostics"]["exclusions"]["node_limit"] > 0

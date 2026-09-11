@@ -98,6 +98,9 @@ class RuntimeConfig(_StrictModel):
     near_match_min_score: float = Field(default=0.78, ge=0.5, le=1.0)
     near_match_max_candidates: int = Field(default=8, ge=1, le=32)
     near_match_per_term: int = Field(default=3, ge=1, le=8)
+    # Interim stand-in for the REQ-SEM-04 semantic map (not built yet):
+    # term -> alternatives for query expansion. None keeps the built-in table.
+    query_synonyms: dict[str, list[str]] | None = None
     weak_match_fallback_score: int = Field(default=5, ge=0, le=100)
     # Opt-in: use trust/temporal diagnostics as a bounded secondary ranking signal.
     trust_ranking_enabled: bool = False
@@ -216,7 +219,8 @@ class ModelBudgetProfile(_StrictModel):
     prompt_token_budget: int | None = Field(default=None, ge=64)
     reserved_response_tokens: int | None = Field(default=None, ge=16)
     context_char_budget: int | None = Field(default=None, ge=256)
-    tokenizer: str | None = None
+    # Blank would silently inherit the global tokenizer; omit the key instead.
+    tokenizer: str | None = Field(default=None, min_length=1)
     tokenizer_encoding: str | None = None
     chars_per_token: float | None = Field(default=None, gt=0)
 

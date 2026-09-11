@@ -80,7 +80,8 @@ from tirzah.retrieval.queries import (
     graph_edges_for_node,
     list_documents,
     node_context,
-    parse_iso_date,
+    MAX_SEARCH_LIMIT,
+    origin_filter_bounds,
     parse_iso_datetime,
     render_context_document,
     search_nodes,
@@ -106,7 +107,7 @@ from tirzah.sessions.endorsements import (
     list_generated_output_nodes,
     update_node_endorsement,
 )
-from tirzah.sessions.interaction import answer_query, build_query_embedding
+from tirzah.sessions.interaction import answer_query, query_embedding_with_diagnostic
 from tirzah.sessions.run import run_traced_interaction
 from tirzah.sessions.output_ingestion import (
     list_output_ingestion_jobs,
@@ -359,7 +360,9 @@ def rebuild_document_from_existing_source(
     )
     annotate_source_dates(result, adapter_path, text)
     result.source.path = source.get("path") or str(source_path)
-    result.source.checksum_sha256 = source.get("checksum_sha256") or sha256_file(source_path)
+    # Always the file actually read: the stored value names the previous
+    # version (kept in source.previous_checksums by the rebuild).
+    result.source.checksum_sha256 = sha256_file(source_path)
     result.source.archive_path = source.get("archive_path") or str(source_path)
     result.ingestion_epoch = ingestion_epoch
     inserted = rebuild_document(
@@ -658,6 +661,7 @@ def add_enqueue_profile_batch_arguments(command: argparse.ArgumentParser) -> Non
     command.add_argument("--min-similarity", type=float, default=0.75)
     command.add_argument("--candidate-scan-limit", type=int, default=None)
     command.add_argument("--exclude-node-key", action="append", default=[])
+    command.add_argument("--after-node-id", default=None, help="Resume a sweep after this focus node id.")
     command.add_argument("--dry-run", action="store_true")
     command.add_argument("--format", choices=["json", "text"], default="json")
 
@@ -665,7 +669,7 @@ def add_enqueue_profile_batch_arguments(command: argparse.ArgumentParser) -> Non
 def add_contradiction_candidate_arguments(command: argparse.ArgumentParser) -> None:
     command.add_argument("node_id")
     command.add_argument("--include-same-document", action="store_true")
-    command.add_argument("--min-similarity", type=float, default=0.82)
+    command.add_argument("--min-similarity", type=float, default=None)
     command.add_argument("--max-similarity", type=float, default=0.97)
     command.add_argument("--limit", type=int, default=10)
     command.add_argument("--candidate-scan-limit", type=int, default=None)
@@ -676,7 +680,7 @@ def add_enqueue_contradiction_candidate_arguments(command: argparse.ArgumentPars
     command.add_argument("node_id")
     command.add_argument("--include-same-document", action="store_true")
     command.add_argument("--created-by", default="user")
-    command.add_argument("--min-similarity", type=float, default=0.82)
+    command.add_argument("--min-similarity", type=float, default=None)
     command.add_argument("--max-similarity", type=float, default=0.97)
     command.add_argument("--limit", type=int, default=10)
     command.add_argument("--candidate-scan-limit", type=int, default=None)
@@ -689,10 +693,14 @@ def add_enqueue_contradiction_batch_arguments(command: argparse.ArgumentParser) 
     command.add_argument("--candidates-per-node", type=int, default=2)
     command.add_argument("--include-same-document", action="store_true")
     command.add_argument("--created-by", default="user")
-    command.add_argument("--min-similarity", type=float, default=0.82)
+    command.add_argument("--min-similarity", type=float, default=None)
     command.add_argument("--max-similarity", type=float, default=0.97)
     command.add_argument("--candidate-scan-limit", type=int, default=None)
     command.add_argument("--exclude-node-key", action="append", default=[])
+    command.add_argument("--after-node-id", default=None, help="Resume a sweep after this focus node id.")
+    # Preview by default, like POST /api/review/enqueue-contradiction-batch;
+    # --apply writes pending review rows. --dry-run is accepted for old scripts.
+    command.add_argument("--apply", action="store_true")
     command.add_argument("--dry-run", action="store_true")
     command.add_argument("--format", choices=["json", "text"], default="json")
 
@@ -709,16 +717,18 @@ def render_contradiction_candidates_text(report: dict) -> str:
         [
             (
                 f"band: {diagnostics.get('min_similarity')} <= similarity < "
-                f"{diagnostics.get('max_similarity')} | min cues {diagnostics.get('min_cues')}"
+                f"{diagnostics.get('max_similarity')}"
             ),
+            f"rule: {diagnostics.get('admission_rule')}",
             (
                 f"considered: {diagnostics.get('considered_count', 0)} embedding neighbors | "
                 f"returned {diagnostics.get('returned_count', 0)}"
             ),
             (
                 "excluded: "
+                f"{exclusions.get('below_min_similarity', 0)} below similarity floor, "
                 f"{exclusions.get('above_max_similarity', 0)} near-duplicate similarity, "
-                f"{exclusions.get('insufficient_cues', 0)} below cue bar, "
+                f"{exclusions.get('no_disagreement_evidence', 0)} without disagreement evidence, "
                 f"{exclusions.get('missing_target', 0)} missing target"
             ),
         ]
@@ -2163,34 +2173,43 @@ def main() -> None:
 
     if args.command == "search-nodes":
         ensure_indexes(db)
-        print(
-            json.dumps(
-                {
-                    "ok": True,
-                    "nodes": search_nodes(
-                        db,
-                        query=args.query,
-                        label=args.label,
-                        endorsement_label=args.endorsement,
-                        document_id=args.document_id,
-                        created_after=parse_iso_datetime(args.created_after),
-                        created_before=parse_iso_datetime(args.created_before),
-                        origin_after=parse_iso_date(args.origin_after),
-                        origin_before=parse_iso_date(args.origin_before),
-                        limit=args.limit,
-                        query_embedding=build_query_embedding(config.runtime, args.query),
-                        vector_search_index=config.runtime.vector_search_index or None,
-                        vector_scan_limit=config.runtime.hybrid_vector_scan_limit,
-                        trust_ranking_enabled=args.trust_ranking or config.runtime.trust_ranking_enabled,
-                        trust_weighting_profile=args.trust_profile or config.runtime.trust_weighting_profile,
-                        trust_ranking_weight=config.runtime.trust_ranking_weight,
-                        trust_ranking_max_boost=config.runtime.trust_ranking_max_boost,
-                        trust_ranking_hybrid_weight=config.runtime.trust_ranking_hybrid_weight,
-                    ),
-                },
-                indent=2,
-            )
+        query_embedding, embedding_diagnostic = query_embedding_with_diagnostic(
+            config.runtime, args.query
         )
+        origin_after, origin_before, ignored_filters = origin_filter_bounds(
+            args.origin_after, args.origin_before
+        )
+        payload = {
+            "ok": True,
+            "nodes": search_nodes(
+                db,
+                query=args.query,
+                label=args.label,
+                endorsement_label=args.endorsement,
+                document_id=args.document_id,
+                created_after=parse_iso_datetime(args.created_after),
+                created_before=parse_iso_datetime(args.created_before),
+                origin_after=origin_after,
+                origin_before=origin_before,
+                limit=max(1, min(args.limit, MAX_SEARCH_LIMIT)),
+                query_embedding=query_embedding,
+                vector_search_index=config.runtime.vector_search_index or None,
+                vector_scan_limit=config.runtime.hybrid_vector_scan_limit,
+                trust_ranking_enabled=args.trust_ranking or config.runtime.trust_ranking_enabled,
+                trust_weighting_profile=args.trust_profile or config.runtime.trust_weighting_profile,
+                trust_ranking_weight=config.runtime.trust_ranking_weight,
+                trust_ranking_max_boost=config.runtime.trust_ranking_max_boost,
+                trust_ranking_hybrid_weight=config.runtime.trust_ranking_hybrid_weight,
+            ),
+        }
+        diagnostics = {}
+        if embedding_diagnostic:
+            diagnostics["query_embedding"] = embedding_diagnostic
+        if ignored_filters:
+            diagnostics["ignored_filters"] = ignored_filters
+        if diagnostics:
+            payload["diagnostics"] = diagnostics
+        print(json.dumps(payload, indent=2))
         return
 
     if args.command == "node-context":
@@ -2389,6 +2408,7 @@ def main() -> None:
             candidate_scan_limit=args.candidate_scan_limit,
             exclude_node_keys=args.exclude_node_key,
             dry_run=args.dry_run,
+            after_node_id=args.after_node_id,
         )
         if args.format == "text":
             print(render_vector_semantic_batch_text(result))
@@ -2446,7 +2466,8 @@ def main() -> None:
             max_similarity=args.max_similarity,
             candidate_scan_limit=args.candidate_scan_limit,
             exclude_node_keys=args.exclude_node_key,
-            dry_run=args.dry_run,
+            dry_run=not args.apply,
+            after_node_id=args.after_node_id,
         )
         if args.format == "text":
             print(render_contradiction_batch_text(result))

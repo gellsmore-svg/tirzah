@@ -72,6 +72,8 @@ class IngestionResult(BaseModel):
     tree_status: str = TREE_STATUS_ACTIVE
     ingestion_epoch: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
+    # Parser report: canonical kind, chunk strategy, dropped/normalised content.
+    source_analysis: dict[str, Any] = Field(default_factory=dict)
 
 
 class DocumentRecord(BaseModel):

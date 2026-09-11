@@ -3,6 +3,7 @@ from bson import ObjectId
 from tirzah.retrieval.contradictions import (
     conflict_lexicon_matches,
     contradiction_candidate_nodes,
+    contradiction_candidate_report,
     contradiction_signals_for_pair,
     origin_date_delta_days,
     parse_origin_date,
@@ -109,7 +110,10 @@ def test_origin_date_delta_requires_both_dates() -> None:
     assert parse_origin_date("2024-06-01T12:00:00Z").isoformat() == "2024-06-01"
 
 
-def test_contradiction_signals_require_two_cues() -> None:
+def test_contradiction_signals_require_disagreement_evidence() -> None:
+    # Issue #44: shared labels and a date delta carry no disagreement signal,
+    # so they no longer admit a pair on their own; a one-sided negation over
+    # shared claim wording is required.
     source = node(
         title="Claim",
         text="The protocol requires endorsement before retrieval.",
@@ -145,7 +149,7 @@ def test_contradiction_signals_require_two_cues() -> None:
         source, labeled_dated, embedding_similarity=0.9
     )
     assert labeled_dated_signals["cue_count"] == 2
-    assert labeled_dated_signals["meets_conservative_bar"] is True
+    assert labeled_dated_signals["meets_conservative_bar"] is False
     assert labeled_dated_signals["conflict_lexicon"] is False
 
     labeled_conflict_signals = contradiction_signals_for_pair(
@@ -153,6 +157,7 @@ def test_contradiction_signals_require_two_cues() -> None:
     )
     assert labeled_conflict_signals["shared_semantic_labels"] is True
     assert labeled_conflict_signals["conflict_lexicon"] is True
+    assert labeled_conflict_signals["negated_shared_claim"] is True
     assert labeled_conflict_signals["meets_conservative_bar"] is True
 
     dated_conflict_signals = contradiction_signals_for_pair(
@@ -161,7 +166,9 @@ def test_contradiction_signals_require_two_cues() -> None:
     assert dated_conflict_signals["shared_semantic_labels"] is False
     assert dated_conflict_signals["origin_date_delta"] is True
     assert dated_conflict_signals["conflict_lexicon"] is True
-    assert dated_conflict_signals["meets_conservative_bar"] is True
+    # "contrary" on one side, but the pair barely shares claim wording.
+    assert dated_conflict_signals["claim_overlap"] < 0.4
+    assert dated_conflict_signals["meets_conservative_bar"] is False
 
     labels_only_signals = contradiction_signals_for_pair(
         source, labels_only, embedding_similarity=0.9
@@ -277,3 +284,57 @@ def test_contradiction_candidate_nodes_keeps_high_bar_matches() -> None:
     assert signals["conflict_lexicon"] is True
     assert "contrary" in signals["conflict_terms"]
     assert 0.82 <= candidate["embedding_similarity"] < 0.97
+
+
+def test_agreeing_and_unrelated_pairs_are_not_contradiction_candidates() -> None:
+    # Issue #44: each of these cleared the old 2-of-3 cue bar.
+    same_claim = "A vorton is a topological soliton."
+    agreeing = contradiction_signals_for_pair(
+        node(text=same_claim, labels=["source_chunk", "ams_domain"], origin_date="2025-01-01"),
+        node(text=same_claim, labels=["source_chunk", "ams_domain"], origin_date="2026-01-01"),
+        embedding_similarity=0.95,
+    )
+    assert agreeing["meets_conservative_bar"] is False
+
+    html_pair = contradiction_signals_for_pair(
+        node(text="Install the package with pip.", labels=["source_chunk", "html_export"], origin_date="2026-01-01"),
+        node(text="Configuration lives in config.toml.", labels=["source_chunk", "html_export"], origin_date="2026-01-02"),
+        embedding_similarity=0.9,
+    )
+    assert html_pair["shared_semantic_labels"] is False  # format labels are not semantic
+    assert html_pair["meets_conservative_bar"] is False
+
+    innocuous = contradiction_signals_for_pair(
+        node(text="Python vs Rust: however, the results are not wrong."),
+        node(text="Benchmarks were collected on a laptop over a weekend."),
+        embedding_similarity=0.9,
+    )
+    assert innocuous["conflict_lexicon"] is True
+    assert innocuous["meets_conservative_bar"] is False
+
+
+def test_denial_below_old_floor_is_found_and_scan_drops_are_reported() -> None:
+    # Issue #64: denial lowers embedding similarity, so the old 0.82 floor
+    # discarded genuine contradictions before the cues ran, invisibly.
+    focus_id = ObjectId()
+    db = FakeDb(
+        [
+            node(node_id=focus_id, title="Charge claim", text="A vorton is a topological soliton.", vector=[1.0, 0.0, 0.0]),
+            node(
+                title="Charge counterclaim",
+                text="A vorton is not a topological soliton; that claim is wrong.",
+                vector=[0.77, 0.6380438857, 0.0],
+            ),
+            node(title="Paraphrase", text="Vortons are topological solitons.", vector=[0.9, 0.4358898944, 0.0]),
+            node(title="Unrelated", text="Weather report for the weekend.", vector=[0.0, 0.0, 1.0]),
+        ]
+    )
+
+    report = contradiction_candidate_report(db, str(focus_id))
+
+    assert [row["title"] for row in report["nodes"]] == ["Charge counterclaim"]
+    diagnostics = report["diagnostics"]
+    assert diagnostics["min_similarity"] == 0.6
+    assert diagnostics["exclusions"]["below_min_similarity"] == 1
+    assert diagnostics["exclusions"]["no_disagreement_evidence"] == 1
+    assert diagnostics["embedding_scan"]["scanned_count"] == 3

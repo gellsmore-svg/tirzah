@@ -10,7 +10,7 @@ from bson.errors import InvalidId
 from pymongo.database import Database
 
 from tirzah.adapters.answer import answer_adapter
-from tirzah.adapters.embedding import embedding_adapter
+from tirzah.adapters.embedding import EmbeddingAdapterPolicyError, embedding_adapter
 from tirzah.config import AppConfig
 from tirzah.db.governance import create_process_run, list_agent_identities, update_process_run
 from tirzah.db.repositories import document_tree
@@ -130,8 +130,10 @@ LOW_INTENT_QUERIES = {
 ANSWER_PROCESS_ID = "answer_query"
 
 
-def _token_budget_pair(config: AppConfig) -> dict[str, int]:
-    args = envelope_budget_args(config)
+def _token_budget_pair(config: AppConfig, runtime_config: Any = None) -> dict[str, int]:
+    """Token budget for one request; ``runtime_config`` carries the per-request
+    model/adapter selection so its model profile, not the default's, applies."""
+    args = envelope_budget_args(config, runtime=runtime_config)
     return {
         "token_budget": int(args.get("token_budget") or config.retrieval.prompt_token_budget),
         "reserved_response_tokens": int(
@@ -381,7 +383,7 @@ def answer_query_agentic(
         prompt = build_agentic_answer_envelope(
             query=query,
             tool_results=tool_results,
-            **_token_budget_pair(config),
+            **_token_budget_pair(config, runtime_config),
             proposed_controller_decision=final_controller_decision_from_trace(process_trace),
             context_proposal=final_context_proposal_from_trace(process_trace),
         )
@@ -578,7 +580,10 @@ def prepare_direct_answer_prompt(
     query: str,
     focus_node_id: str | None,
     session_id: str,
+    runtime_config: Any = None,
 ) -> dict[str, Any]:
+    # Per-request runtime (model/adapter overrides); budgets resolve against it.
+    runtime = runtime_config if runtime_config is not None else config.runtime
     selected_node_id = focus_node_id
     selected_node_source = "provided" if focus_node_id else None
     active_documents: list[dict[str, Any]] = []
@@ -612,13 +617,13 @@ def prepare_direct_answer_prompt(
                 query=query,
                 resolver=make_resolver(config.runtime),
                 semantic_strict=config.runtime.mahalath_strict,
-                **envelope_budget_args(config),
+                **envelope_budget_args(config, runtime=runtime),
             )
         else:
             retrieval_status = "missing_context"
             prompt = build_prompt_envelope_without_context(
                 query=query,
-                **_token_budget_pair(config),
+                **_token_budget_pair(config, runtime),
             )
             prompt["context_metadata"]["retrieval_status"] = retrieval_status
     else:
@@ -629,7 +634,7 @@ def prepare_direct_answer_prompt(
             prompt = build_active_document_source_fallback_envelope(
                 active_documents=active_documents,
                 query=query,
-                **_token_budget_pair(config),
+                **_token_budget_pair(config, runtime),
             )
         if prompt:
             retrieval_status = "active_document_source_fallback"
@@ -637,7 +642,7 @@ def prepare_direct_answer_prompt(
             retrieval_status = "no_focus_node"
             prompt = build_prompt_envelope_without_context(
                 query=query,
-                **_token_budget_pair(config),
+                **_token_budget_pair(config, runtime),
             )
         prompt["context_metadata"]["retrieval_decision"] = retrieval_decision
     controller_decision = direct_context_controller_decision(
@@ -1455,12 +1460,16 @@ def ranked_focus_matches(
     cleaned_query = normalize_query_text(query)
     assembly = build_query_assembly(cleaned_query)
     extra = {"query_embedding": query_embedding} if query_embedding is not None else {}
+    from tirzah.retrieval.queries import trust_candidate_pool_limit
+
+    # Trust ranking ranks the widened pool; the final slice trims to `limit`.
+    trust_enabled = bool(getattr(runtime_config, "trust_ranking_enabled", False))
     matches = search_nodes(
         db,
         query=cleaned_query,
         label=label,
         document_id=document_id,
-        limit=limit,
+        limit=trust_candidate_pool_limit(limit) if trust_enabled else limit,
         **extra,
     )
     if cleaned_query:
@@ -1503,7 +1512,7 @@ def ranked_focus_matches(
         for row in matches
     ]
     scored_matches.sort(key=lambda row: row["match_score"], reverse=True)
-    return finalize_trust_ranking(db, scored_matches[:limit], runtime_config=runtime_config, identity=None)
+    return finalize_trust_ranking(db, scored_matches, runtime_config=runtime_config, identity=None)[:limit]
 
 
 def active_document_reference_query(query: str) -> bool:
@@ -2225,8 +2234,8 @@ def execute_tool_calls(
                     query=arguments.get("query"),
                     original_query=original_query,
                     label=arguments.get("label"),
-                    origin_after=arguments.get("origin_after"),
-                    origin_before=arguments.get("origin_before"),
+                    origin_after=tool_origin_date_argument(arguments, "origin_after"),
+                    origin_before=tool_origin_date_argument(arguments, "origin_before"),
                     limit=bounded_limit(arguments.get("limit"), default=5),
                     session_id=session_id,
                     runtime_config=runtime_config,
@@ -2362,6 +2371,27 @@ def tool_argument_error(tool: str, field: str) -> ToolUsageError:
     )
 
 
+def tool_origin_date_argument(arguments: dict[str, Any], field: str) -> str | None:
+    """Normalise a search_nodes origin bound. A malformed date raises an
+    instructional error; passed through raw it would compare lexicographically
+    in Mongo and silently narrow the results to nothing."""
+    from tirzah.retrieval.queries import ORIGIN_BOUND_FORMATS, normalize_origin_bound
+
+    value = arguments.get(field)
+    if value in (None, ""):
+        return None
+    parsed = normalize_origin_bound(
+        str(value), bound="before" if field == "origin_before" else "after"
+    )
+    if parsed is None:
+        spec = tool_spec_by_name("search_nodes")
+        raise ToolUsageError(
+            f"search_nodes {field} must be a date ({ORIGIN_BOUND_FORMATS}); got {value!r}.",
+            f"Call search_nodes with arguments matching this spec: {json.dumps(spec.get('arguments') or {})}",
+        )
+    return parsed
+
+
 def tool_error_result(index: int, tool: str, arguments: dict[str, Any], error: Exception) -> dict[str, Any]:
     result = {
         "index": index,
@@ -2415,6 +2445,8 @@ def reformulation_kwargs(runtime_config: Any | None) -> dict[str, Any]:
         kwargs["per_term"] = runtime_config.near_match_per_term
     if getattr(runtime_config, "near_match_max_candidates", None) is not None:
         kwargs["near_match_limit"] = runtime_config.near_match_max_candidates
+    if getattr(runtime_config, "query_synonyms", None) is not None:
+        kwargs["synonyms"] = runtime_config.query_synonyms
     return kwargs
 
 
@@ -2438,17 +2470,38 @@ def build_query_embedding(runtime_config: Any, text: str | None) -> dict[str, An
     """Embed the query text for hybrid search, or return None to fall back to
     lexical-only ranking. Returns None when hybrid search is disabled, the
     embedding adapter is the deterministic mock (its query-vs-node similarity is
-    not meaningful), or embedding fails for any reason."""
+    not meaningful), or embedding fails for any reason. Callers that report to an
+    operator should use :func:`query_embedding_with_diagnostic` instead."""
+    return query_embedding_with_diagnostic(runtime_config, text)[0]
+
+
+def query_embedding_with_diagnostic(
+    runtime_config: Any, text: str | None
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Like :func:`build_query_embedding`, plus a diagnostic explaining a
+    degrade to lexical-only search. A policy refusal (HTTP-backed adapter) is
+    reported distinctly from a transient embedding failure."""
     if not text or runtime_config is None:
-        return None
+        return None, None
     if not getattr(runtime_config, "hybrid_search_enabled", False):
-        return None
-    if getattr(runtime_config, "embedding_adapter", "mock") == "mock":
-        return None
+        return None, None
+    adapter_name = getattr(runtime_config, "embedding_adapter", "mock")
+    if adapter_name == "mock":
+        return None, None
     try:
-        return embedding_adapter(runtime_config).embed(text)
-    except Exception:
-        return None
+        return embedding_adapter(runtime_config).embed(text), None
+    except EmbeddingAdapterPolicyError as error:
+        reason = "embedding_adapter_blocked"
+        message = str(error)
+    except Exception as error:
+        reason = "embedding_failed"
+        message = str(error)
+    return None, {
+        "reason": reason,
+        "adapter": adapter_name,
+        "message": message,
+        "fallback": "lexical_only",
+    }
 
 
 def execute_search_nodes_tool(
@@ -2475,6 +2528,15 @@ def execute_search_nodes_tool(
         "vector_search_index": getattr(runtime_config, "vector_search_index", None) or None,
         "vector_scan_limit": getattr(runtime_config, "hybrid_vector_scan_limit", None),
     }
+    from tirzah.retrieval.queries import trust_candidate_pool_limit
+
+    # Trust ranking must see the pre-truncation pool, or it can only permute
+    # the top-`limit` page; `matches[:limit]` below trims it back.
+    search_limit = (
+        trust_candidate_pool_limit(limit)
+        if getattr(runtime_config, "trust_ranking_enabled", False)
+        else limit
+    )
     if identity:
         unrestricted_sample = search_nodes(
             db,
@@ -2495,7 +2557,7 @@ def execute_search_nodes_tool(
             label=label,
             origin_after=origin_after,
             origin_before=origin_before,
-            limit=limit,
+            limit=search_limit,
             identity=identity,
             **vector_kwargs,
         )
@@ -2506,7 +2568,7 @@ def execute_search_nodes_tool(
             label=label,
             origin_after=origin_after,
             origin_before=origin_before,
-            limit=limit,
+            limit=search_limit,
             **vector_kwargs,
         )
     details: dict[str, Any] = {
@@ -2834,6 +2896,7 @@ def build_query_assembly(
     min_score: float | None = None,
     per_term: int | None = None,
     near_match_limit: int | None = None,
+    synonyms: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     ranking_query = combined_query_text(query, original_query)
     if not ranking_query:
@@ -2871,6 +2934,7 @@ def build_query_assembly(
         min_score=min_score if min_score is not None else NEAR_MATCH_MIN_SCORE,
         per_term=per_term if per_term is not None else DEFAULT_NEAR_MATCH_PER_TERM,
         limit=near_match_limit if near_match_limit is not None else DEFAULT_NEAR_MATCH_MAX_CANDIDATES,
+        synonyms=synonyms,
     )
 
 

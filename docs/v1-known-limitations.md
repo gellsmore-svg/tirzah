@@ -1,6 +1,6 @@
 # V1 Known Limitations
 
-Date: 2026-06-15
+Date: 2026-06-15 (persistence, retrieval and trust notes revised 2026-09-11)
 
 Tirzah V1 is complete as a local memory workbench: ingestion, inspection, retrieval, sessions, active documents, generated-output review, semantic-edge review, governance listings, and readable activity logs are implemented across CLI and web surfaces. The limits below describe what remains scaffolded or post-V1, so release and checklist language stays precise.
 
@@ -8,14 +8,16 @@ This file incorporates the durable findings from the June 14 review artifacts no
 
 ## Persistence And Recovery
 
-- Ingestion and rebuild writes use best-effort rollback/restore behavior rather than MongoDB transactions or a two-phase commit.
+- Ingestion and rebuild writes use rollback/restore behavior rather than MongoDB transactions or a two-phase commit (standalone MongoDB, the default deployment, cannot run transactions). Rebuild rollback is non-destructive: it deletes only rows the failed write added and restores every prior row in place, so a crash mid-rollback can leave extra or not-yet-restored rows but never an emptied tree. Ingestion validates adapter structure (every `parent_key` must name a node) before writing anything.
 - Embeddings are generated during node insertion for normal ingestion paths. Larger deployments should prefer explicit profile backfill and stronger interruption recovery.
 - Maintenance paths are being batched incrementally, but not all rebuild/backfill operations are optimized for large corpora.
 
 ## Retrieval Quality
 
-- Primary retrieval is still lexical and locally reranked; vector/profile signals exist but are not yet a full hybrid lexical+vector retrieval path. A deterministic hybrid ranker (`hybrid_rank` in `retrieval/queries.py`, ADR-020) is wired into **both** the direct and agentic retrieval modes — `runtime.hybrid_search_enabled` is now **on by default**, active only with a real (non-mock) embedding adapter and degrading safely to lexical otherwise (so it is harmless under the default mock adapter). A third retrieval mode, **`deep`** (ADR-020, `retrieval/deep.py`), is now selectable (`retrieval_mode: deep`): a Python-orchestrated agent loop over a fixed validated primitive menu — plan → execute → gate/shortlist → triage → deterministic stop → synthesise. The menu now includes **`semantic_search`** — pure meaning-based (vector) retrieval for free-text queries (`query_embedding_candidate_nodes`), which reaches relevant nodes that share **no keywords** with the query, unlike the lexically-gated `keyword_search`/`hybrid_search`. Deep mode and `semantic_search` have been validated end-to-end against the real `mnemosyne_dev` corpus (fully embedded `ams_domain`) with a real local model; a token estimator and a frontier synthesis adapter remain post-V1.
-- Trust and temporal diagnostics are exposed for inspection, but they do not yet affect default ranking.
+- Retrieval is hybrid lexical+vector when a real (non-mock) embedding adapter is configured, and lexical with local reranking under the default mock adapter. `search_nodes` unions lexical hits with embedding candidates (Atlas `$vectorSearch` when `runtime.vector_search_index` is set, with every query filter re-applied; otherwise a bounded cosine scan). A deterministic hybrid ranker (`hybrid_rank` in `retrieval/queries.py`, ADR-020) is wired into **both** the direct and agentic retrieval modes — `runtime.hybrid_search_enabled` is now **on by default**, active only with a real (non-mock) embedding adapter and degrading safely to lexical otherwise (so it is harmless under the default mock adapter). A third retrieval mode, **`deep`** (ADR-020, `retrieval/deep.py`), is now selectable (`retrieval_mode: deep`): a Python-orchestrated agent loop over a fixed validated primitive menu — plan → execute → gate/shortlist → triage → deterministic stop → synthesise. The menu now includes **`semantic_search`** — pure meaning-based (vector) retrieval for free-text queries (`query_embedding_candidate_nodes`), which reaches relevant nodes that share **no keywords** with the query, unlike the lexically-gated `keyword_search`/`hybrid_search`. Deep mode and `semantic_search` have been validated end-to-end against the real `mnemosyne_dev` corpus (fully embedded `ams_domain`) with a real local model; a token estimator and a frontier synthesis adapter remain post-V1.
+- Trust and temporal diagnostics are exposed for inspection and do not affect default ranking. Opt-in trust ranking (`runtime.trust_ranking_enabled`) re-ranks the pre-truncation candidate pool as a bounded secondary signal.
+- Query synonym expansion uses a small interim table (overridable via `runtime.query_synonyms`), not the REQ-SEM-04 semantic map, which is not built.
+- Contradiction candidates use a lexical disagreement rule (one-sided negation over shared claim wording). The similarity floor (0.6) was chosen from one corpus and one embedding model; re-measure when changing models.
 - Relevance gating remains V1-scaffold depth for broad prompts; stronger thresholds and per-node "why included" explanations are post-V1 work.
 
 ## Continuity

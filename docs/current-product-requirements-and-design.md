@@ -2,11 +2,11 @@
 
 Date: 2026-05-29
 
-Status: working product design. This document consolidates the requirements currently driving Mnemosyne so the implementation can be reviewed as a coherent product rather than as scattered prototype notes.
+Status: historical input, not authoritative. This document was folded into `docs/consolidated-requirements-and-design.md`, which is the single review entry point (see `docs/requirements-index.md`); where the two differ, the consolidated document wins. It predates the rename from Mnemosyne to Tirzah and has been updated only for naming.
 
 ## Product Intent
 
-Mnemosyne is a local-first memory engine. It should preserve source material, build a graph of documents and semantic objects, retrieve context for questions, and explain what it did in language a human can inspect without reading code or JSON.
+Tirzah is a local-first memory engine. It should preserve source material, build a graph of documents and semantic objects, retrieve context for questions, and explain what it did in language a human can inspect without reading code or JSON.
 
 The system is not intended to be a single closed chatbot. It should become a memory backend that can serve a web UI, CLI agents, coding support, web importers, voice transcript tools, and future FOSS integrations.
 
@@ -130,7 +130,7 @@ The system is not intended to be a single closed chatbot. It should become a mem
 
 ### Runtime Shape
 
-- Python package under `src/mnemosyne`.
+- Python package under `src/tirzah`.
 - Local MongoDB persistence.
 - FastAPI backend.
 - Static HTML/CSS/JS web UI.

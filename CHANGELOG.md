@@ -7,16 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-09-10 review, #32–#66)
+- **CI/release:** `main` is green again, and tag releases now run the test
+  suite before publishing to PyPI (#38, #39).
+- **Rebuild integrity:** targeted rebuilds no longer delete human-reviewed
+  edges; full rebuilds carry them onto new node ids. Node matching is
+  content-first, so an endorsement stays with its text, and endorsement/usage
+  reset when a node's content changes. Operator origin dates and their history
+  survive rebuilds. The stored checksum names the current file. Regenerated
+  summaries no longer claim operator provenance. Rollback is non-destructive,
+  and out-of-order child nodes are linked (#32–#35, #47, #53, #55).
+- **Ingestion fidelity:** HTML `<pre>` whitespace and marked-up headings are
+  preserved; CSV cells past the header count are kept (as `column_N`) and large
+  CSVs are chunked. The activity log now reports parser transformations in
+  `source_analysis` (#36, #37, #48).
+- **Trust ranking:** scores the stored node (not the serialized row), ranks
+  before truncation, gives the seeded profile a real decay half-life, and
+  keeps mixed hybrid/lexical pools on one scale (#40–#42, #56).
+- **Retrieval plumbing:** Atlas `$vectorSearch` honours every query filter;
+  origin-date bounds are normalised (the planner gets an instructional error
+  for bad dates; CLI and web report ignored bounds); `origin_date` is indexed;
+  search limits are clamped (#43, #46, #50, #66).
+- **Prompt budgets:** budgets resolve against the model selected for the
+  request, and deep mode packs its synthesis context under a budget and
+  reports it. `tokenizer_fallback` is only true on a real fallback, and HTTP
+  embedding refusals are reported instead of silently degrading (#45, #52,
+  #54, #63).
+- **Contradictions:** candidates now need disagreement evidence;
+  `enqueue-contradiction-batch` previews by default (`--apply` to write);
+  batch sweeps page via `after_node_id` (#44, #64, #65).
+- **Graph explorer:** `branch_limit` is per node and drops are counted (#51).
+- **Docs:** requirements documents reconciled with shipped behaviour (#57,
+  #58, #59).
+
 ### Added
 - **Graph neighborhood explorer:** `graph-explore` renders a one- or two-hop
   neighborhood as text or Mermaid (`--format mermaid`), including relation
   types, endorsement, dates, and provenance. Optional `--endorsement` and
   `--identity-id` filters. Web: `GET /graph` is a vanilla SVG viewer over
   `GET /api/graph/explore/{node_id}` (no extra JS libraries).
-- **Contradiction candidates:** conservative `contradicts` review candidates from
-  embedding neighbors in a high-similarity band (default 0.82–0.97) that also
-  match at least two of: shared semantic labels, origin-date delta ≥ 1 day, and
-  a conflict lexicon. Near-duplicates are excluded. Candidates stamp both nodes'
+- **Contradiction candidates:** `contradicts` review candidates from embedding
+  neighbors (similarity 0.6–0.97; the floor only bounds the scan) that show
+  disagreement evidence: a negation/refutation term on one side only, over
+  shared claim wording. Shared semantic labels and origin-date delta are
+  tie-breakers only. Near-duplicates are excluded. Candidates stamp both nodes'
   dates and provenance and reuse `review-semantic-edge-candidate`. CLI:
   `contradiction-candidates`, `enqueue-contradiction-candidates`,
   `enqueue-contradiction-batch`. Web: `/api/review/contradiction-candidates` and
@@ -32,7 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   approximation. `build-prompt` / answer traces expose tokenizer, profile,
   and skip/truncation counts.
 - **Query reformulation:** near-match fallback now includes light stemming,
-  1-edit typo candidates, and vocabulary-gated synonyms. Original vs
+  1-edit typo candidates, and vocabulary-gated synonyms from a small interim
+  table (overridable via `runtime.query_synonyms`). The table is a stand-in,
+  not the REQ-SEM-04 semantic map, which is not built. Original vs
   reformulated query is recorded in query assembly and search-tool traces.
   Thresholds are configurable (`near_match_min_score`, `near_match_per_term`,
   `weak_match_fallback_score`).
@@ -47,9 +83,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`lexical`/`vector`/`hybrid`). CLI and `/api/search` pass a query embedding
   when a real embedder is configured. Degrades to lexical if embeddings are
   missing.
-- **Additional source formats:** ingest HTML (heading outline, chrome/script
-  stripped), common code files (Python AST; JS/TS/Rust/Go/Java/Ruby
-  declarations), and JSON/YAML/CSV while archiving the original bytes.
+- **Additional source formats:** ingest HTML (heading outline; nav/footer and
+  script/style omitted from the parsed tree and counted in the activity log),
+  common code files (Python AST; JS/TS/Rust/Go/Java/Ruby declarations), and
+  JSON/YAML/CSV while archiving the original bytes.
   Format labels such as `html_export` and `code_python` are applied automatically.
 - **Chronological intelligence:** origin dates now stamp every ingested node
   with source and confidence; `search-nodes --origin-after/--origin-before`
@@ -58,8 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   input. Operators can correct dates with provenance via `set-origin-date` or
   `POST /api/documents/{id}/origin-date`.
 - **Targeted rebuilds:** `rebuild-document --diff-only` (and `rebuild-by-label`)
-  patches only changed sections/chunks in the active tree, keeps stable node
-  ids, and skips re-embedding unchanged text. `--compare` and
+  patches only changed sections/chunks in the active tree, keeps node ids for
+  content-matched nodes, and skips re-embedding unchanged text. `--compare` and
   `show-tree --compare` print the structural diff without applying it. Web:
   `GET /api/documents/{id}/rebuild-diff` and `POST /api/rebuild-document`
   with `mode=diff`. Nodes now stamp `content_sha256` at ingest.

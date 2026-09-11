@@ -85,7 +85,8 @@ from tirzah.retrieval.queries import (
     embedding_candidate_report,
     expand_graph_paths,
     expand_proximity,
-    parse_iso_date,
+    MAX_SEARCH_LIMIT,
+    origin_filter_bounds,
     graph_edges_for_node,
     list_documents,
     search_nodes,
@@ -98,7 +99,7 @@ from tirzah.sessions.interaction import (
     answer_query,
     backfill_chunks,
     backfill_turn_embeddings,
-    build_query_embedding,
+    query_embedding_with_diagnostic,
 )
 from tirzah.sessions.run import run_traced_interaction
 from galeed import (
@@ -249,6 +250,7 @@ class EnqueueVectorSemanticBatchRequest(BaseModel):
     candidate_scan_limit: int | None = None
     exclude_node_keys: list[str] = []
     dry_run: bool = True
+    after_node_id: str | None = None
 
 
 class EnqueueContradictionBatchRequest(BaseModel):
@@ -258,11 +260,12 @@ class EnqueueContradictionBatchRequest(BaseModel):
     candidates_per_node: int = 2
     include_same_document: bool = False
     created_by: str = "web"
-    min_similarity: float = 0.82
+    min_similarity: float | None = None
     max_similarity: float = 0.97
     candidate_scan_limit: int | None = None
     exclude_node_keys: list[str] = []
     dry_run: bool = True
+    after_node_id: str | None = None
 
 
 class CreateProcessRunRequest(BaseModel):
@@ -451,6 +454,12 @@ def _authorized_api_token(request: Request, token: str) -> bool:
     return False
 
 
+def _bounded_limit(value: int, *, maximum: int) -> int:
+    """Clamp a query-string ``limit`` to 1..maximum. Unclamped, a huge limit
+    multiplies into the Mongo candidate scan and ``-1`` reaches ``rows[:-1]``."""
+    return max(1, min(int(value), maximum))
+
+
 def _prompt_budget_snapshot(config) -> dict[str, Any]:
     from tirzah.retrieval.budget import resolve_budget_plan
 
@@ -460,6 +469,10 @@ def _prompt_budget_snapshot(config) -> dict[str, Any]:
         adapter=config.runtime.answer_adapter,
     )
     return {
+        # The configured default model's plan. A request that selects another
+        # model resolves that model's profile; its trace carries the real plan.
+        "scope": "default_model",
+        "available_profiles": sorted(config.retrieval.model_profiles or {}),
         "profile_key": plan.profile_key,
         "model": plan.model,
         "adapter": plan.adapter,
@@ -626,7 +639,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/documents")
     def documents(limit: int = 10) -> dict[str, Any]:
-        return {"ok": True, "documents": list_documents(db, limit=limit)}
+        return {"ok": True, "documents": list_documents(db, limit=_bounded_limit(limit, maximum=200))}
 
     @app.get("/api/documents/{document_id}/rebuild-diff")
     def document_rebuild_diff(document_id: str) -> dict[str, Any]:
@@ -935,6 +948,7 @@ def create_app() -> FastAPI:
             candidate_scan_limit=request.candidate_scan_limit,
             exclude_node_keys=request.exclude_node_keys,
             dry_run=request.dry_run,
+            after_node_id=request.after_node_id,
         )
 
     @app.get("/api/review/contradiction-candidates")
@@ -942,7 +956,7 @@ def create_app() -> FastAPI:
         node_id: str,
         limit: int = 10,
         include_same_document: bool = False,
-        min_similarity: float = 0.82,
+        min_similarity: float | None = None,
         max_similarity: float = 0.97,
         candidate_scan_limit: int | None = None,
     ) -> dict[str, Any]:
@@ -973,6 +987,7 @@ def create_app() -> FastAPI:
             candidate_scan_limit=request.candidate_scan_limit,
             exclude_node_keys=request.exclude_node_keys,
             dry_run=request.dry_run,
+            after_node_id=request.after_node_id,
         )
 
     @app.post("/api/review/semantic-edge-candidate")
@@ -1001,16 +1016,22 @@ def create_app() -> FastAPI:
         trust_ranking: bool = False,
         trust_profile: str | None = None,
     ) -> dict[str, Any]:
-        return {
+        query_embedding, embedding_diagnostic = query_embedding_with_diagnostic(
+            config.runtime, query or None
+        )
+        normalized_after, normalized_before, ignored_filters = origin_filter_bounds(
+            origin_after, origin_before
+        )
+        payload: dict[str, Any] = {
             "ok": True,
             "nodes": search_nodes(
                 db,
                 query=query or None,
                 label=label,
-                origin_after=parse_iso_date(origin_after),
-                origin_before=parse_iso_date(origin_before),
-                limit=limit,
-                query_embedding=build_query_embedding(config.runtime, query or None),
+                origin_after=normalized_after,
+                origin_before=normalized_before,
+                limit=_bounded_limit(limit, maximum=MAX_SEARCH_LIMIT),
+                query_embedding=query_embedding,
                 vector_search_index=config.runtime.vector_search_index or None,
                 vector_scan_limit=config.runtime.hybrid_vector_scan_limit,
                 trust_ranking_enabled=trust_ranking or config.runtime.trust_ranking_enabled,
@@ -1020,6 +1041,14 @@ def create_app() -> FastAPI:
                 trust_ranking_hybrid_weight=config.runtime.trust_ranking_hybrid_weight,
             ),
         }
+        diagnostics: dict[str, Any] = {}
+        if embedding_diagnostic:
+            diagnostics["query_embedding"] = embedding_diagnostic
+        if ignored_filters:
+            diagnostics["ignored_filters"] = ignored_filters
+        if diagnostics:
+            payload["diagnostics"] = diagnostics
+        return payload
 
     @app.post("/api/documents/{document_id}/origin-date")
     def set_document_origin_date(document_id: str, request: SetOriginDateRequest) -> dict[str, Any]:
@@ -1502,7 +1531,7 @@ def create_app() -> FastAPI:
             "ok": True,
             "exchanges": recent_exchanges(
                 db,
-                limit=limit,
+                limit=_bounded_limit(limit, maximum=200),
                 session_id=session_id,
                 query_text=q,
                 adapter=adapter,
@@ -1527,7 +1556,9 @@ def create_app() -> FastAPI:
         limit: int = 500,
     ) -> dict[str, Any]:
         """Replay persisted process events for a trace/session (dev-log initial load / poll)."""
-        events = list_trace_events(db, trace_id=trace_id, session_id=session_id, limit=limit)
+        events = list_trace_events(
+            db, trace_id=trace_id, session_id=session_id, limit=_bounded_limit(limit, maximum=5000)
+        )
         return {"ok": True, "traceId": trace_id, "sessionId": session_id, "events": events}
 
     @app.get("/api/trace/stream")
@@ -1824,7 +1855,7 @@ def create_app() -> FastAPI:
                 step_name=step_name,
                 status=status,
                 since=since,
-                limit=limit,
+                limit=_bounded_limit(limit, maximum=1000),
                 include_payloads=payloads,
             ),
         }

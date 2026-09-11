@@ -6,14 +6,17 @@ from typing import Any
 from bson import ObjectId
 from bson.errors import InvalidId
 from pymongo.database import Database
+from pymongo.errors import DuplicateKeyError
 
 from tirzah.db.schema import collection_available
 from tirzah.adapters.embedding import default_embedding_adapter
 from tirzah.ingestion.diff import (
     as_proposed,
     diff_ingestion_trees,
+    existing_content_sha256,
     node_content_sha256,
     serialize_rebuild_diff,
+    structural_label,
 )
 from tirzah.models.ingestion import (
     DEFAULT_ENDORSEMENT_LABEL,
@@ -33,6 +36,34 @@ from tirzah.models.ingestion import (
 STRUCTURAL_LABELS = {"source_root", "source_section", "source_chunk"}
 DEFAULT_INGESTION_EPOCH_SUFFIX = "default"
 SYMMETRIC_SEMANTIC_RELATION_TYPES = {"related_to", "contradicts"}
+# provenance.adapter of edges a human created through semantic-edge review.
+REVIEWED_EDGE_ADAPTER = "user_review"
+# origin_date_source values that record a human decision a rebuild must keep.
+OPERATOR_DATE_SOURCES = {"operator"}
+
+
+class IngestionStructureError(ValueError):
+    """Adapter output is structurally invalid (a REQ-FAI-01 parsing failure),
+    e.g. a node whose parent_key names no node in the result."""
+
+
+def validate_parent_keys(nodes: list[Any]) -> None:
+    keys = {node.node_key for node in nodes}
+    missing = sorted({node.parent_key for node in nodes if node.parent_key and node.parent_key not in keys})
+    if missing:
+        raise IngestionStructureError(
+            "Ingestion result references parent_key(s) with no matching node: " + ", ".join(missing[:10])
+        )
+
+
+def link_pending_parents(
+    db: Database, pending: list[tuple[object, str]], key_to_id: dict[str, object]
+) -> None:
+    """Second pass for nodes emitted before their parent: parent_id could not
+    be resolved when the child was written. validate_parent_keys guarantees
+    every key resolves by now."""
+    for node_id, parent_key in pending:
+        db.nodes.update_one({"_id": node_id}, {"$set": {"parent_id": key_to_id[parent_key]}})
 
 
 class DuplicateSourceError(Exception):
@@ -51,6 +82,7 @@ def commit_ingestion(
     result: IngestionResult,
     embedder: Any | None = None,
 ) -> dict[str, Any]:
+    validate_parent_keys(result.nodes)
     if result.source.checksum_sha256:
         existing = find_duplicate_by_checksum(db, result.source.checksum_sha256)
         if existing:
@@ -95,6 +127,7 @@ def rebuild_document(
 ) -> dict[str, Any]:
     if mode not in {"full", "diff"}:
         raise ValueError(f"Unknown rebuild mode: {mode}")
+    validate_parent_keys(result.nodes)
     if mode == "diff" or compare_only:
         return targeted_rebuild_document(
             db,
@@ -112,6 +145,11 @@ def rebuild_document(
     previous_trees = list(db.trees.find({"document_id": object_id}))
     previous_nodes = list(db.nodes.find({"document_id": object_id}))
     previous_edges = list_graph_edges_for_document(db, object_id)
+    previous_active_nodes = [
+        node for node in previous_nodes if node.get("status") not in INACTIVE_RETRIEVAL_STATUSES
+    ]
+    reviewed_edges = reviewed_edges_touching(db, {node["_id"] for node in previous_active_nodes})
+    source_doc, source_changes = merged_rebuild_source(existing.get("source") or {}, result)
     try:
         mark_document_tree_nodes_status(
             db,
@@ -125,7 +163,7 @@ def rebuild_document(
                 "$set": {
                     "title": result.title,
                     "summary": result.summary,
-                    "source": result.source.model_dump(),
+                    "source": source_doc,
                     "ingestion_epoch": ingestion_epoch,
                     "updated_at": result.created_at,
                 }
@@ -134,13 +172,20 @@ def rebuild_document(
         inserted = insert_tree_nodes(
             db, object_id, result, ingestion_epoch=ingestion_epoch, embedder=embedder
         )
+        reviewed = carry_reviewed_edges_to_new_tree(
+            db,
+            reviewed_edges,
+            previous_active_nodes,
+            ObjectId(inserted["tree_id"]),
+            now=result.created_at,
+        )
     except Exception:
         db.documents.replace_one({"_id": object_id}, existing)
         restore_collection_rows(db.trees, object_id, previous_trees)
         restore_collection_rows(db.nodes, object_id, previous_nodes)
-        delete_graph_edges_for_document(db, object_id)
-        if previous_edges and collection_available(db, "graph_edges"):
-            db.graph_edges.insert_many(previous_edges)
+        if collection_available(db, "graph_edges"):
+            restore_collection_rows(db.graph_edges, object_id, previous_edges)
+            restore_rows_by_id(db.graph_edges, reviewed_edges)
         raise
     return {
         "document_id": str(object_id),
@@ -148,6 +193,8 @@ def rebuild_document(
         "versioned": True,
         "superseded_tree_count": len(previous_trees),
         "superseded_node_count": len(previous_nodes),
+        "source_changes": source_changes,
+        **reviewed,
         **inserted,
     }
 
@@ -204,6 +251,8 @@ def targeted_rebuild_document(
     previous_tree = dict(tree)
     previous_nodes = list(db.nodes.find({"tree_id": tree["_id"]}))
     previous_edges = list_graph_edges_for_tree(db, tree["_id"])
+    reviewed_edges = reviewed_edges_touching(db, {node["_id"] for node in previous_nodes})
+    source_doc, source_changes = merged_rebuild_source(existing.get("source") or {}, result)
     try:
         applied = apply_targeted_rebuild(
             db,
@@ -213,16 +262,18 @@ def targeted_rebuild_document(
             diff=diff,
             ingestion_epoch=ingestion_epoch,
             embedder=embedder or default_embedding_adapter(),
+            source_doc=source_doc,
+            reviewed_edges=reviewed_edges,
         )
     except Exception:
+        # No MongoDB transaction (standalone deployments cannot run one), so the
+        # restore is non-destructive: it never deletes a pre-rebuild row.
         db.documents.replace_one({"_id": object_id}, previous_document)
         db.trees.replace_one({"_id": tree["_id"]}, previous_tree)
-        db.nodes.delete_many({"tree_id": tree["_id"]})
-        if previous_nodes:
-            db.nodes.insert_many(previous_nodes)
-        delete_graph_edges_for_tree(db, tree["_id"])
-        if previous_edges and collection_available(db, "graph_edges"):
-            db.graph_edges.insert_many(previous_edges)
+        restore_rows_in_scope(db.nodes, {"tree_id": tree["_id"]}, previous_nodes, unique_key_field="node_key")
+        if collection_available(db, "graph_edges"):
+            restore_rows_in_scope(db.graph_edges, {"tree_id": tree["_id"]}, previous_edges)
+            restore_rows_by_id(db.graph_edges, reviewed_edges)
         raise
     return {
         "ok": True,
@@ -235,6 +286,7 @@ def targeted_rebuild_document(
         "replaced": False,
         "ingestion_epoch": ingestion_epoch,
         "diff": serialized,
+        "source_changes": source_changes,
         **applied,
     }
 
@@ -262,6 +314,8 @@ def apply_targeted_rebuild(
     diff: dict[str, Any],
     ingestion_epoch: str,
     embedder: Any,
+    source_doc: dict[str, Any] | None = None,
+    reviewed_edges: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     now = result.created_at
     tree_id = tree["_id"]
@@ -271,7 +325,7 @@ def apply_targeted_rebuild(
             "$set": {
                 "title": result.title,
                 "summary": result.summary,
-                "source": result.source.model_dump(),
+                "source": source_doc if source_doc is not None else result.source.model_dump(),
                 "ingestion_epoch": ingestion_epoch,
                 "updated_at": now,
             }
@@ -300,14 +354,22 @@ def apply_targeted_rebuild(
     updated_ids: list[str] = []
     added_ids: list[str] = []
     embedded_node_count = 0
+    pending_parents: list[tuple[object, str]] = []
+    content_changed_ids: set[object] = set()
+    cleared_endorsement_count = 0
+    summary_provenance_reset_count = 0
+    free_node_keys_for_layout(db, tree_id, result, diff)
 
     for order, ingested in enumerate(result.nodes):
         proposed = as_proposed(ingested)
         kind, entry = by_proposed.get((proposed["parent_key"], proposed["node_key"]), ("added", None))
         parent_id = key_to_id.get(proposed["parent_key"]) if proposed["parent_key"] else None
+        parent_pending = bool(proposed["parent_key"]) and parent_id is None
         if kind == "unchanged":
             existing = entry["existing"]
             node_id = existing["_id"]
+            if parent_pending:
+                pending_parents.append((node_id, proposed["parent_key"]))
             if existing.get("order") != order or existing.get("parent_id") != parent_id:
                 db.nodes.update_one(
                     {"_id": node_id},
@@ -328,9 +390,20 @@ def apply_targeted_rebuild(
                 "labels": proposed.get("labels") or existing.get("labels") or [],
                 "updated_at": now,
             }
-            if kind == "changed" or existing_content_changed(entry):
+            # Only a content change re-embeds and resets; a title/position-only
+            # change keeps text, summary and the human judgements on it.
+            if existing_content_changed(entry):
                 embedding = embedder.embed(proposed["text"])
                 embedded_node_count += 1
+                content_changed_ids.add(node_id)
+                resets = content_change_resets(existing, proposed, now)
+                if existing.get("endorsement_label") not in (None, DEFAULT_ENDORSEMENT_LABEL):
+                    cleared_endorsement_count += 1
+                summary_provenance = regenerated_summary_provenance(existing, now)
+                if summary_provenance is not None:
+                    fields["summary_provenance"] = summary_provenance
+                    summary_provenance_reset_count += 1
+                fields.update(resets)
                 fields.update(
                     {
                         "text": proposed["text"],
@@ -353,12 +426,15 @@ def apply_targeted_rebuild(
                             "archive_path": result.source.archive_path,
                             "ingestion_epoch": ingestion_epoch,
                             "adapter": result.adapter,
+                            "endorsement_label": resets["endorsement_label"],
                         },
                     }
                 )
             db.nodes.update_one({"_id": node_id}, {"$set": fields})
             key_to_id[proposed["node_key"]] = node_id
             updated_ids.append(str(node_id))
+            if parent_pending:
+                pending_parents.append((node_id, proposed["parent_key"]))
             continue
 
         embedding = embedder.embed(proposed["text"])
@@ -401,8 +477,11 @@ def apply_targeted_rebuild(
         inserted_id = db.nodes.insert_one(node_record.model_dump()).inserted_id
         key_to_id[proposed["node_key"]] = inserted_id
         added_ids.append(str(inserted_id))
+        if parent_pending:
+            pending_parents.append((inserted_id, proposed["parent_key"]))
 
     removed_ids = []
+    superseded_ids: set[object] = set()
     for entry in diff["removed"]:
         node_id = entry["existing"]["_id"]
         db.nodes.update_one(
@@ -416,14 +495,39 @@ def apply_targeted_rebuild(
             },
         )
         removed_ids.append(str(node_id))
+        superseded_ids.add(node_id)
 
-    delete_graph_edges_for_tree(db, tree_id)
+    link_pending_parents(db, pending_parents, key_to_id)
+    # One document, one chronology: restamp every active node (not only the
+    # changed/added ones) with the document's possibly operator-preserved date.
+    db.nodes.update_many(
+        {"tree_id": tree_id, "status": {"$nin": list(INACTIVE_RETRIEVAL_STATUSES)}},
+        {
+            "$set": {
+                "origin_date": result.source.origin_date,
+                "origin_date_source": result.source.origin_date_source,
+                "origin_date_confidence": result.source.origin_date_confidence,
+            }
+        },
+    )
+    # Machine edges are regenerated from the new parse; human-reviewed edges
+    # are never deleted (flag_reviewed_edges marks those whose endpoint moved on).
+    reviewed_edges = list(reviewed_edges or [])
+    deleted_edge_count = delete_graph_edges_for_tree(db, tree_id, keep_reviewed=True)
     edge_result = insert_relation_edges(
         db=db,
         document_id=document_id,
         tree_id=tree_id,
         result=result,
         key_to_id=key_to_id,
+        skip_edge_keys={graph_edge_key(edge) for edge in reviewed_edges},
+    )
+    reviewed = flag_reviewed_edges(
+        db,
+        reviewed_edges,
+        superseded_ids=superseded_ids,
+        content_changed_ids=content_changed_ids,
+        now=now,
     )
     return {
         "preserved_node_count": len(preserved_ids),
@@ -438,8 +542,40 @@ def apply_targeted_rebuild(
         "updated_node_ids": updated_ids,
         "added_node_ids": added_ids,
         "removed_node_ids": removed_ids,
+        "deleted_edge_count": deleted_edge_count,
+        "cleared_endorsement_count": cleared_endorsement_count,
+        "summary_provenance_reset_count": summary_provenance_reset_count,
+        **reviewed,
         **edge_result,
     }
+
+
+def free_node_keys_for_layout(
+    db: Database, tree_id: object, result: IngestionResult, diff: dict[str, Any]
+) -> None:
+    """``node_key`` is unique per tree, and content-first matching can move a
+    kept node onto a key another node still holds (a shifted section, or a key
+    last used by a superseded node). Before writing the new layout, park every
+    key it needs that is held by anything other than the node keeping it:
+    re-keyed matches get a temporary key (the node loop writes the final one);
+    non-matched holders are superseded and keep the old key in
+    ``superseded_node_key``."""
+    proposed_keys = {node.node_key for node in result.nodes}
+    matched_entries = [entry for kind in ("unchanged", "changed", "moved") for entry in diff[kind]]
+    keeps_key = {
+        entry["existing"]["_id"]
+        for entry in matched_entries
+        if entry["existing"].get("node_key") == entry["proposed"]["node_key"]
+    }
+    matched = {entry["existing"]["_id"] for entry in matched_entries}
+    for node in db.nodes.find({"tree_id": tree_id}):
+        if node.get("node_key") not in proposed_keys or node["_id"] in keeps_key:
+            continue
+        if node["_id"] in matched:
+            fields = {"node_key": f"__rekeying__{node['_id']}"}
+        else:
+            fields = {"node_key": f"__superseded__{node['_id']}", "superseded_node_key": node.get("node_key")}
+        db.nodes.update_one({"_id": node["_id"]}, {"$set": fields})
 
 
 def existing_content_changed(entry: dict[str, Any]) -> bool:
@@ -448,9 +584,242 @@ def existing_content_changed(entry: dict[str, Any]) -> bool:
     return proposed.get("content_sha256") != (existing.get("content_sha256") or node_content_sha256(existing.get("text")))
 
 
-def delete_graph_edges_for_tree(db: Database, tree_id: object) -> None:
-    if collection_available(db, "graph_edges"):
-        db.graph_edges.delete_many({"tree_id": tree_id})
+def content_change_resets(
+    existing: dict[str, Any], proposed: dict[str, Any], now: datetime
+) -> dict[str, Any]:
+    """A node id kept across a content change must not carry human judgements
+    about the old text: endorsement, usage and continuity-critical reset, with
+    the prior values kept in ``content_change_history``."""
+    history = list(existing.get("content_change_history") or [])
+    history.append(
+        {
+            "changed_at": now,
+            "previous_content_sha256": existing_content_sha256(existing),
+            "previous_endorsement_label": existing.get("endorsement_label"),
+            "previous_usage_score": existing.get("usage_score"),
+            "previous_continuity_critical": bool(existing.get("continuity_critical")),
+        }
+    )
+    return {
+        "endorsement_label": proposed.get("endorsement_label") or DEFAULT_ENDORSEMENT_LABEL,
+        "usage_score": 0,
+        "last_used_at": None,
+        "continuity_critical": bool(proposed.get("continuity_critical")),
+        "content_change_history": history[-20:],
+    }
+
+
+def regenerated_summary_provenance(existing: dict[str, Any], now: datetime) -> dict[str, Any] | None:
+    """Provenance for a summary a rebuild regenerated from changed text. A
+    reviewed (e.g. operator) summary moves into history rather than lending
+    its provenance to the machine extract that replaced it."""
+    provenance = existing.get("summary_provenance")
+    if not provenance:
+        return None
+    history = list(provenance.get("history") or [])
+    history.append(
+        {
+            "summary": existing.get("summary"),
+            "source": provenance.get("source"),
+            "reviewer": provenance.get("reviewer"),
+            "replaced_at": now,
+            "note": "Replaced on rebuild: the source content changed.",
+        }
+    )
+    return {"source": "derived_extractive", "updated_at": now, "history": history}
+
+
+def merged_rebuild_source(
+    previous: dict[str, Any], result: IngestionResult
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Source metadata for a rebuilt document: facts recomputed from the new
+    parse, with reviewed metadata carried forward rather than replaced.
+
+    - An operator-reviewed origin date survives (``result.source`` is updated
+      in place so every rebuilt node is stamped with it).
+    - ``origin_date_history`` and operator date candidates are merged; an
+      automatic date that changes gets a history entry.
+    - A changed checksum is kept in ``previous_checksums``.
+
+    Returns the source document and a report of what changed.
+    """
+    source = result.source
+    now = result.created_at
+    changes: dict[str, Any] = {}
+    history = list(previous.get("origin_date_history") or [])
+    previous_date = previous.get("origin_date")
+    if previous.get("origin_date_source") in OPERATOR_DATE_SOURCES and previous_date:
+        if source.origin_date != previous_date:
+            changes["origin_date_preserved"] = {
+                "origin_date": previous_date,
+                "origin_date_source": previous.get("origin_date_source"),
+                "recomputed_origin_date": source.origin_date,
+                "recomputed_origin_date_source": source.origin_date_source,
+            }
+        source.origin_date = previous_date
+        source.origin_date_source = previous.get("origin_date_source")
+        source.origin_date_confidence = previous.get("origin_date_confidence")
+    elif previous_date != source.origin_date and (previous_date or source.origin_date):
+        if previous_date:
+            history.append(
+                {
+                    "origin_date": previous_date,
+                    "origin_date_source": previous.get("origin_date_source"),
+                    "origin_date_confidence": previous.get("origin_date_confidence"),
+                    "replaced_at": now,
+                    "reviewer": "rebuild",
+                    "note": "Recomputed from the source on rebuild.",
+                }
+            )
+        changes["origin_date_changed"] = {
+            "from": previous_date,
+            "to": source.origin_date,
+            "origin_date_source": source.origin_date_source,
+        }
+    source.origin_date_history = history + [
+        entry for entry in source.origin_date_history if entry not in history
+    ]
+    operator_candidates = [
+        candidate
+        for candidate in previous.get("date_candidates") or []
+        if candidate.get("source") in OPERATOR_DATE_SOURCES
+    ]
+    source.date_candidates = list(source.date_candidates) + [
+        candidate for candidate in operator_candidates if candidate not in source.date_candidates
+    ]
+    source_doc = source.model_dump()
+    previous_checksums = list(previous.get("previous_checksums") or [])
+    previous_checksum = previous.get("checksum_sha256")
+    if previous_checksum and source.checksum_sha256 and previous_checksum != source.checksum_sha256:
+        previous_checksums.append({"checksum_sha256": previous_checksum, "replaced_at": now})
+        changes["checksum_changed"] = {"from": previous_checksum, "to": source.checksum_sha256}
+    if previous_checksums:
+        source_doc["previous_checksums"] = previous_checksums
+    return source_doc, changes
+
+
+def graph_edge_key(edge: dict[str, Any]) -> tuple[Any, Any, Any]:
+    return (edge.get("source_node_id"), edge.get("target_node_id"), edge.get("relation_type"))
+
+
+def reviewed_edges_touching(db: Database, node_ids: set[object]) -> list[dict[str, Any]]:
+    """Human-reviewed edges with either endpoint in ``node_ids``. Reviewed
+    edges are a small curated set, so they are filtered here in Python."""
+    if not node_ids or not collection_available(db, "graph_edges"):
+        return []
+    return [
+        edge
+        for edge in db.graph_edges.find({"provenance.adapter": REVIEWED_EDGE_ADAPTER})
+        if edge.get("source_node_id") in node_ids or edge.get("target_node_id") in node_ids
+    ]
+
+
+def flag_reviewed_edges(
+    db: Database,
+    reviewed_edges: list[dict[str, Any]],
+    *,
+    superseded_ids: set[object],
+    content_changed_ids: set[object],
+    now: datetime,
+) -> dict[str, int]:
+    """After a targeted rebuild, reviewed edges on unchanged nodes stand as
+    they are; those whose endpoint was superseded or had its text changed are
+    kept but flagged for re-review. None are deleted."""
+    flagged = orphaned = 0
+    for edge in reviewed_edges:
+        endpoints = {edge.get("source_node_id"), edge.get("target_node_id")}
+        if endpoints & superseded_ids:
+            reason = "endpoint_superseded"
+            orphaned += 1
+        elif endpoints & content_changed_ids:
+            reason = "endpoint_content_changed"
+            flagged += 1
+        else:
+            continue
+        db.graph_edges.update_one(
+            {"_id": edge["_id"]},
+            {"$set": {"needs_review": True, "needs_review_reason": reason, "updated_at": now}},
+        )
+    return {
+        "reviewed_edge_count": len(reviewed_edges),
+        "flagged_reviewed_edge_count": flagged,
+        "orphaned_reviewed_edge_count": orphaned,
+    }
+
+
+def carry_reviewed_edges_to_new_tree(
+    db: Database,
+    reviewed_edges: list[dict[str, Any]],
+    previous_active_nodes: list[dict[str, Any]],
+    new_tree_id: object,
+    *,
+    now: datetime,
+) -> dict[str, int]:
+    """A full rebuild mints new node ids. Move each reviewed edge endpoint from
+    its superseded node onto the new node with identical content (same content
+    hash and structural label, unique on both sides). An edge with an endpoint
+    that has no such counterpart stays on the superseded node, flagged."""
+    counts = {"reviewed_edge_count": len(reviewed_edges), "remapped_reviewed_edge_count": 0, "orphaned_reviewed_edge_count": 0}
+    if not reviewed_edges:
+        return counts
+
+    def identity(node: dict[str, Any]) -> tuple[str, str]:
+        return existing_content_sha256(node), structural_label(node.get("labels"))
+
+    old_by_identity: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for node in previous_active_nodes:
+        old_by_identity.setdefault(identity(node), []).append(node)
+    new_by_identity: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for node in db.nodes.find({"tree_id": new_tree_id}):
+        new_by_identity.setdefault(identity(node), []).append(node)
+    mapping = {
+        olds[0]["_id"]: new_by_identity[key][0]
+        for key, olds in old_by_identity.items()
+        if len(olds) == 1 and len(new_by_identity.get(key, [])) == 1
+    }
+    old_ids = {node["_id"] for node in previous_active_nodes}
+    for edge in reviewed_edges:
+        fields: dict[str, Any] = {}
+        unmapped = False
+        for side in ("source", "target"):
+            node_id = edge.get(f"{side}_node_id")
+            if node_id not in old_ids:
+                continue
+            new_node = mapping.get(node_id)
+            if new_node is None:
+                unmapped = True
+                break
+            fields[f"{side}_node_id"] = new_node["_id"]
+            fields[f"{side}_node_key"] = new_node.get("node_key")
+            fields[f"{side}_tree_id"] = new_tree_id
+            if side == "source":
+                fields["tree_id"] = new_tree_id
+        if not unmapped:
+            try:
+                db.graph_edges.update_one({"_id": edge["_id"]}, {"$set": {**fields, "updated_at": now}})
+                counts["remapped_reviewed_edge_count"] += 1
+                continue
+            except DuplicateKeyError:
+                pass
+        counts["orphaned_reviewed_edge_count"] += 1
+        db.graph_edges.update_one(
+            {"_id": edge["_id"]},
+            {"$set": {"needs_review": True, "needs_review_reason": "endpoint_superseded", "updated_at": now}},
+        )
+    return counts
+
+
+def delete_graph_edges_for_tree(db: Database, tree_id: object, *, keep_reviewed: bool = False) -> int:
+    """Delete a tree's graph edges and return how many went. ``keep_reviewed``
+    spares human-reviewed edges."""
+    if not collection_available(db, "graph_edges"):
+        return 0
+    query: dict[str, Any] = {"tree_id": tree_id}
+    if keep_reviewed:
+        query["provenance.adapter"] = {"$ne": REVIEWED_EDGE_ADAPTER}
+    count = db.graph_edges.count_documents(query)
+    db.graph_edges.delete_many(query)
+    return count
 
 
 def list_graph_edges_for_tree(db: Database, tree_id: object) -> list[dict[str, Any]]:
@@ -488,9 +857,44 @@ def restore_collection_rows(
     document_id: object,
     previous_rows: list[dict[str, Any]],
 ) -> None:
-    collection.delete_many({"document_id": document_id})
-    if previous_rows:
-        collection.insert_many(previous_rows)
+    restore_rows_in_scope(collection, {"document_id": document_id}, previous_rows)
+
+
+def restore_rows_in_scope(
+    collection: Any,
+    scope: dict[str, Any],
+    previous_rows: list[dict[str, Any]],
+    *,
+    unique_key_field: str | None = None,
+) -> None:
+    """Rollback without a delete-everything window (REQ-FAI-05 on deployments
+    that cannot run a transaction): only rows the failed write *added* are
+    deleted; every pre-existing row is then restored in place by ``_id``. A
+    crash part-way leaves extra or not-yet-restored rows, never missing ones.
+
+    ``unique_key_field`` names a per-scope unique field (``node_key``); rows
+    whose value changed are parked on a temporary value first so swapped
+    values cannot collide on the unique index mid-restore.
+    """
+    previous_ids = {row["_id"] for row in previous_rows}
+    live = {row["_id"]: row for row in collection.find(scope)}
+    for row_id in live:
+        if row_id not in previous_ids:
+            collection.delete_one({"_id": row_id})
+    if unique_key_field:
+        for row in previous_rows:
+            current = live.get(row["_id"])
+            if current is not None and current.get(unique_key_field) != row.get(unique_key_field):
+                collection.update_one(
+                    {"_id": row["_id"]},
+                    {"$set": {unique_key_field: f"__restoring__{row['_id']}"}},
+                )
+    restore_rows_by_id(collection, previous_rows)
+
+
+def restore_rows_by_id(collection: Any, rows: list[dict[str, Any]]) -> None:
+    for row in rows:
+        collection.replace_one({"_id": row["_id"]}, row, upsert=True)
 
 
 def insert_tree_nodes(
@@ -501,6 +905,7 @@ def insert_tree_nodes(
     ingestion_epoch: str | None = None,
     embedder: Any | None = None,
 ) -> dict[str, Any]:
+    validate_parent_keys(result.nodes)
     ingestion_epoch = ingestion_epoch or resolved_ingestion_epoch(result)
     embedder = embedder or default_embedding_adapter()
     tree_status = result.tree_status or TREE_STATUS_ACTIVE
@@ -520,6 +925,7 @@ def insert_tree_nodes(
     key_to_id: dict[str, object] = {}
     node_ids = []
     embedded_node_count = 0
+    pending_parents: list[tuple[object, str]] = []
     for order, node in enumerate(result.nodes):
         endorsement_label = node.endorsement_label or DEFAULT_ENDORSEMENT_LABEL
         parent_id = key_to_id.get(node.parent_key) if node.parent_key else None
@@ -566,6 +972,9 @@ def insert_tree_nodes(
         inserted_id = db.nodes.insert_one(node_doc).inserted_id
         key_to_id[node.node_key] = inserted_id
         node_ids.append(inserted_id)
+        if node.parent_key and parent_id is None:
+            pending_parents.append((inserted_id, node.parent_key))
+    link_pending_parents(db, pending_parents, key_to_id)
     edge_result = insert_relation_edges(
         db=db,
         document_id=document_id,
@@ -743,11 +1152,15 @@ def insert_relation_edges(
     tree_id: object,
     result: IngestionResult,
     key_to_id: dict[str, object],
+    skip_edge_keys: set[tuple[Any, Any, Any]] | None = None,
 ) -> dict[str, int]:
+    """Insert the result's relation hints as edges. ``skip_edge_keys`` holds
+    (source, target, relation) triples already present (e.g. preserved
+    reviewed edges) that would otherwise violate the unique edge index."""
     if not collection_available(db, "graph_edges"):
         return {"edge_count": 0, "skipped_edge_count": 0}
     edge_docs = []
-    seen_edges = set()
+    seen_edges = set(skip_edge_keys or ())
     skipped = 0
     for node in result.nodes:
         source_id = key_to_id.get(node.node_key)
@@ -1246,6 +1659,50 @@ def enqueue_vector_semantic_edge_candidates(
     }
 
 
+def batch_focus_nodes(
+    db: Database,
+    filters: dict[str, Any],
+    *,
+    limit: int,
+    excluded_node_keys: set[str],
+    after_node_id: str | None = None,
+) -> dict[str, Any]:
+    """Focus nodes for a candidate-batch sweep, in deterministic ``_id`` order.
+
+    Exclusions (root nodes, inactive nodes, ``excluded_node_keys``) are applied
+    before the limit, so an excluded node is replaced rather than shrinking the
+    batch. Pass the returned ``next_after_node_id`` back as ``after_node_id`` to
+    continue the sweep; ``exhausted`` turns True once no focus nodes remain.
+    """
+    query = {**filters, "status": {"$nin": list(INACTIVE_RETRIEVAL_STATUSES)}}
+    if after_node_id:
+        after = parse_object_id(after_node_id)
+        if after is None:
+            return {"ok": False, "reason": "invalid_after_node_id", "after_node_id": after_node_id}
+        query["_id"] = {"$gt": after}
+    nodes: list[dict[str, Any]] = []
+    skipped = {"source_root": 0, "excluded_node_key": 0}
+    exhausted = True
+    for node in db.nodes.find(query).sort("_id", 1):
+        if "source_root" in (node.get("labels") or []):
+            skipped["source_root"] += 1
+            continue
+        if str(node.get("node_key") or "") in excluded_node_keys:
+            skipped["excluded_node_key"] += 1
+            continue
+        if len(nodes) >= limit:
+            exhausted = False
+            break
+        nodes.append(node)
+    return {
+        "ok": True,
+        "nodes": nodes,
+        "next_after_node_id": None if exhausted or not nodes else str(nodes[-1]["_id"]),
+        "exhausted": exhausted,
+        "skipped": skipped,
+    }
+
+
 def enqueue_vector_semantic_edge_candidate_batch(
     db: Database,
     label: str | None = None,
@@ -1259,6 +1716,7 @@ def enqueue_vector_semantic_edge_candidate_batch(
     candidate_scan_limit: int | None = None,
     exclude_node_keys: list[str] | None = None,
     dry_run: bool = False,
+    after_node_id: str | None = None,
 ) -> dict[str, Any]:
     if not collection_available(db, "semantic_edge_candidates"):
         return {"ok": False, "reason": "semantic_edge_candidates_unavailable"}
@@ -1286,15 +1744,16 @@ def enqueue_vector_semantic_edge_candidate_batch(
     bounded_focus_limit = max(1, min(int(focus_limit or 25), 200))
     bounded_candidates_per_node = bounded_candidate_limit(candidates_per_node)
     excluded_node_keys = {str(key) for key in (exclude_node_keys or []) if str(key)}
-    focus_nodes = []
-    for node in db.nodes.find(filters).limit(bounded_focus_limit):
-        if "source_root" in (node.get("labels") or []):
-            continue
-        if node.get("status") == "superseded":
-            continue
-        if str(node.get("node_key") or "") in excluded_node_keys:
-            continue
-        focus_nodes.append(node)
+    sweep = batch_focus_nodes(
+        db,
+        filters,
+        limit=bounded_focus_limit,
+        excluded_node_keys=excluded_node_keys,
+        after_node_id=after_node_id,
+    )
+    if not sweep["ok"]:
+        return sweep
+    focus_nodes = sweep["nodes"]
 
     totals = {
         "candidate_count": 0,
@@ -1361,6 +1820,10 @@ def enqueue_vector_semantic_edge_candidate_batch(
             "min_similarity": threshold,
             "candidate_scan_limit": candidate_scan_limit,
             "exclude_node_keys": sorted(excluded_node_keys),
+            "excluded_focus_counts": sweep["skipped"],
+            "after_node_id": after_node_id,
+            "next_after_node_id": sweep["next_after_node_id"],
+            "exhausted": sweep["exhausted"],
             "dry_run": dry_run,
         },
         **totals,
@@ -1374,7 +1837,7 @@ def enqueue_contradiction_candidates(
     limit: int = 10,
     include_same_document: bool = False,
     created_by: str = "user",
-    min_similarity: float = 0.82,
+    min_similarity: float | None = None,
     max_similarity: float = 0.97,
     candidate_scan_limit: int | None = None,
 ) -> dict[str, Any]:
@@ -1392,7 +1855,7 @@ def enqueue_contradiction_candidates(
         CONTRADICTION_RELATION_TYPE,
         DEFAULT_CONTRADICTION_MAX_SIMILARITY,
         DEFAULT_CONTRADICTION_MIN_SIMILARITY,
-        MIN_CONTRADICTION_CUES,
+        CONTRADICTION_ADMISSION_RULE,
         contradiction_candidate_nodes,
     )
 
@@ -1450,7 +1913,7 @@ def enqueue_contradiction_candidates(
         "relation_type": relation,
         "min_similarity": min_threshold,
         "max_similarity": max_threshold,
-        "min_cues": MIN_CONTRADICTION_CUES,
+        "admission_rule": CONTRADICTION_ADMISSION_RULE,
         "candidate_count": len(candidates),
         "enqueued_count": len(inserted),
         "skipped_existing_count": skipped_existing,
@@ -1466,11 +1929,12 @@ def enqueue_contradiction_candidate_batch(
     candidates_per_node: int = 2,
     include_same_document: bool = False,
     created_by: str = "user",
-    min_similarity: float = 0.82,
+    min_similarity: float | None = None,
     max_similarity: float = 0.97,
     candidate_scan_limit: int | None = None,
     exclude_node_keys: list[str] | None = None,
     dry_run: bool = False,
+    after_node_id: str | None = None,
 ) -> dict[str, Any]:
     if not collection_available(db, "semantic_edge_candidates"):
         return {"ok": False, "reason": "semantic_edge_candidates_unavailable"}
@@ -1480,7 +1944,7 @@ def enqueue_contradiction_candidate_batch(
         CONTRADICTION_RELATION_TYPE,
         DEFAULT_CONTRADICTION_MAX_SIMILARITY,
         DEFAULT_CONTRADICTION_MIN_SIMILARITY,
-        MIN_CONTRADICTION_CUES,
+        CONTRADICTION_ADMISSION_RULE,
     )
 
     relation = CONTRADICTION_RELATION_TYPE
@@ -1507,15 +1971,16 @@ def enqueue_contradiction_candidate_batch(
     bounded_focus_limit = max(1, min(int(focus_limit or 25), 200))
     bounded_candidates_per_node = bounded_candidate_limit(candidates_per_node)
     excluded_node_keys = {str(key) for key in (exclude_node_keys or []) if str(key)}
-    focus_nodes = []
-    for node in db.nodes.find(filters).limit(bounded_focus_limit):
-        if "source_root" in (node.get("labels") or []):
-            continue
-        if node.get("status") == "superseded":
-            continue
-        if str(node.get("node_key") or "") in excluded_node_keys:
-            continue
-        focus_nodes.append(node)
+    sweep = batch_focus_nodes(
+        db,
+        filters,
+        limit=bounded_focus_limit,
+        excluded_node_keys=excluded_node_keys,
+        after_node_id=after_node_id,
+    )
+    if not sweep["ok"]:
+        return sweep
+    focus_nodes = sweep["nodes"]
 
     totals = {
         "candidate_count": 0,
@@ -1582,9 +2047,13 @@ def enqueue_contradiction_candidate_batch(
             "created_by": created_by,
             "min_similarity": min_threshold,
             "max_similarity": max_threshold,
-            "min_cues": MIN_CONTRADICTION_CUES,
+            "admission_rule": CONTRADICTION_ADMISSION_RULE,
             "candidate_scan_limit": candidate_scan_limit,
             "exclude_node_keys": sorted(excluded_node_keys),
+            "excluded_focus_counts": sweep["skipped"],
+            "after_node_id": after_node_id,
+            "next_after_node_id": sweep["next_after_node_id"],
+            "exhausted": sweep["exhausted"],
             "dry_run": dry_run,
         },
         **totals,
@@ -1608,7 +2077,7 @@ def contradiction_candidate_document(
 ) -> dict[str, Any]:
     from tirzah.retrieval.contradictions import (
         CONTRADICTION_CANDIDATE_SOURCE,
-        MIN_CONTRADICTION_CUES,
+        CONTRADICTION_ADMISSION_RULE,
         compact_node_provenance,
     )
 
@@ -1633,7 +2102,7 @@ def contradiction_candidate_document(
             "candidate_source": CONTRADICTION_CANDIDATE_SOURCE,
             "min_similarity": min_similarity,
             "max_similarity": max_similarity,
-            "min_cues": MIN_CONTRADICTION_CUES,
+            "admission_rule": CONTRADICTION_ADMISSION_RULE,
             "include_same_document": include_same_document,
             "requested_limit": requested_limit,
             "embedding_model": candidate.get("embedding_model"),
@@ -2585,6 +3054,9 @@ def update_node_summary(
         "reviewer": reviewer,
         "note": note,
         "updated_at": now,
+        # Lets readers check the stored summary is still the one this
+        # provenance describes (a later rewrite that forgot to re-stamp it).
+        "summary_sha256": node_content_sha256(cleaned),
         "history": history,
     }
     db.nodes.update_one(

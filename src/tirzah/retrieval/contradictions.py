@@ -7,23 +7,36 @@ from typing import Any
 from pymongo.database import Database
 
 from tirzah.db.memory_store import MemoryStore, as_memory_store
+from tirzah.ingestion.formats import FORMAT_LABELS
 from tirzah.retrieval.queries import (
     STRUCTURAL_LABELS,
-    embedding_candidate_nodes,
+    embedding_candidate_report,
     parse_object_id,
     serialize_node,
 )
+from tirzah.retrieval.reformulate import light_stems
 
 
 CONTRADICTION_RELATION_TYPE = "contradicts"
 CONTRADICTION_CANDIDATE_SOURCE = "contradiction_signals"
-DEFAULT_CONTRADICTION_MIN_SIMILARITY = 0.82
+# Similarity only bounds the neighbour scan. Denial lowers embedding similarity
+# relative to paraphrase, so a high floor filters out exactly the pairs sought
+# (the genuine pairs in #64 measured 0.77-0.82 with nomic-embed-text, while
+# paraphrases sat above 0.82). The ceiling still drops near-duplicates.
+# Re-measure when changing embedding model.
+DEFAULT_CONTRADICTION_MIN_SIMILARITY = 0.6
 DEFAULT_CONTRADICTION_MAX_SIMILARITY = 0.97
-MIN_CONTRADICTION_CUES = 2
 MIN_ORIGIN_DATE_DELTA_DAYS = 1
+# Share of the smaller node's claim words the pair must have in common for a
+# one-sided negation to read as a denial of the same claim.
+SHARED_CLAIM_MIN_OVERLAP = 0.4
+CONTRADICTION_ADMISSION_RULE = (
+    "a negation/refutation term on one side only, over shared claim wording "
+    f"(overlap >= {SHARED_CLAIM_MIN_OVERLAP}), with similarity in [min, max); "
+    "shared labels and origin-date delta only break ties"
+)
 
-# Whole-word disagreement cues. Weak terms like "not" still need a second
-# independent cue (shared labels or a date delta) before a candidate is queued.
+# Whole-word disagreement vocabulary, shown to reviewers as conflict terms.
 CONFLICT_LEXICON = (
     "not",
     "never",
@@ -45,6 +58,19 @@ CONFLICT_LEXICON_PATTERN = re.compile(
     r"\b(" + "|".join(re.escape(term) for term in CONFLICT_LEXICON) + r")\b",
     re.IGNORECASE,
 )
+# Terms that negate or refute a claim, unlike discourse markers ("however",
+# "vs", "unlike", "instead") that turn up just as often in agreeing prose.
+NEGATION_TERMS = frozenset(
+    {"not", "never", "false", "incorrect", "wrong", "contrary", "contradict", "contradiction", "deny", "refute"}
+)
+CLAIM_STOPWORDS = frozenset(
+    "a an the is are was were be been being of to in on at by for with from and or but if as "
+    "it its this that these those there their they them we you which who what when where how "
+    "than then so such can could may might must shall should will would do does did has have had".split()
+)
+_CLAIM_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+# Ingestion format labels say how a file was parsed, not what it is about.
+FORMAT_LABEL_VALUES = frozenset(label for labels in FORMAT_LABELS.values() for label in labels)
 
 
 def contradiction_candidate_nodes(
@@ -92,15 +118,16 @@ def contradiction_candidate_report(
         "include_same_document": include_same_document,
         "min_similarity": min_threshold,
         "max_similarity": max_threshold,
-        "min_cues": MIN_CONTRADICTION_CUES,
+        "admission_rule": CONTRADICTION_ADMISSION_RULE,
         "candidate_scan_limit": candidate_scan_limit,
         "candidate_source": CONTRADICTION_CANDIDATE_SOURCE,
         "relation_type": CONTRADICTION_RELATION_TYPE,
         "considered_count": 0,
         "returned_count": 0,
         "exclusions": {
+            "below_min_similarity": 0,
             "above_max_similarity": 0,
-            "insufficient_cues": 0,
+            "no_disagreement_evidence": 0,
             "missing_target": 0,
         },
     }
@@ -122,7 +149,7 @@ def contradiction_candidate_report(
         }
 
     considered_limit = max(bounded_limit * 5, bounded_limit)
-    neighbors = embedding_candidate_nodes(
+    neighbor_report = embedding_candidate_report(
         db,
         node_id=node_id,
         limit=considered_limit,
@@ -130,6 +157,18 @@ def contradiction_candidate_report(
         min_similarity=min_threshold,
         candidate_scan_limit=candidate_scan_limit,
     )
+    neighbors = neighbor_report.get("nodes") or []
+    # Surface the scan's own drops so "0 considered" is explainable.
+    scan = neighbor_report.get("diagnostics") or {}
+    scan_exclusions = dict(scan.get("exclusions") or {})
+    diagnostics["embedding_scan"] = {
+        "ok": neighbor_report.get("ok"),
+        "reason": neighbor_report.get("reason"),
+        "scanned_count": scan.get("scanned_count", 0),
+        "scan_truncated": bool(scan.get("scan_truncated")),
+        "exclusions": scan_exclusions,
+    }
+    diagnostics["exclusions"]["below_min_similarity"] = int(scan_exclusions.get("below_threshold") or 0)
     diagnostics["considered_count"] = len(neighbors)
     nodes: list[dict[str, Any]] = []
     for neighbor in neighbors:
@@ -153,7 +192,7 @@ def contradiction_candidate_report(
             max_similarity=max_threshold,
         )
         if not signals.get("meets_conservative_bar"):
-            diagnostics["exclusions"]["insufficient_cues"] += 1
+            diagnostics["exclusions"]["no_disagreement_evidence"] += 1
             continue
         nodes.append(serialize_contradiction_candidate(focus, target, neighbor, signals))
         if len(nodes) >= bounded_limit:
@@ -175,12 +214,19 @@ def contradiction_signals_for_pair(
     min_similarity: float = DEFAULT_CONTRADICTION_MIN_SIMILARITY,
     max_similarity: float = DEFAULT_CONTRADICTION_MAX_SIMILARITY,
 ) -> dict[str, Any]:
+    """Disagreement evidence for a pair. Admission (``meets_conservative_bar``)
+    needs a negation/refutation term on one side only over shared claim
+    wording - "X is Y" against "X is not Y". Shared labels and an origin-date
+    delta carry no disagreement information, so they are reported (and
+    counted in ``cue_count``) only as tie-breakers."""
     shared = shared_semantic_label_values(source, target)
     delta_days = origin_date_delta_days(source.get("origin_date"), target.get("origin_date"))
-    conflict_terms = sorted(
-        set(conflict_lexicon_matches(node_conflict_text(source)))
-        | set(conflict_lexicon_matches(node_conflict_text(target)))
-    )
+    source_terms = set(conflict_lexicon_matches(node_conflict_text(source)))
+    target_terms = set(conflict_lexicon_matches(node_conflict_text(target)))
+    conflict_terms = sorted(source_terms | target_terms)
+    negation_asymmetry = bool((source_terms ^ target_terms) & NEGATION_TERMS)
+    overlap = claim_overlap(source, target)
+    negated_shared_claim = negation_asymmetry and overlap >= SHARED_CLAIM_MIN_OVERLAP
     cues = {
         "shared_semantic_labels": bool(shared),
         "origin_date_delta": delta_days is not None
@@ -193,13 +239,16 @@ def contradiction_signals_for_pair(
     return {
         **cues,
         "cue_count": cue_count,
-        "meets_conservative_bar": cue_count >= MIN_CONTRADICTION_CUES and similarity_in_band,
+        "negation_asymmetry": negation_asymmetry,
+        "claim_overlap": round(overlap, 4),
+        "negated_shared_claim": negated_shared_claim,
+        "meets_conservative_bar": negated_shared_claim and similarity_in_band,
         "shared_labels": shared,
         "conflict_terms": conflict_terms,
         "origin_date_delta_days": delta_days,
         "embedding_similarity": round(similarity, 6) if embedding_similarity is not None else None,
         "similarity_in_band": similarity_in_band,
-        "min_cues": MIN_CONTRADICTION_CUES,
+        "admission_rule": CONTRADICTION_ADMISSION_RULE,
     }
 
 
@@ -258,8 +307,32 @@ def shared_semantic_label_values(source: dict[str, Any], target: dict[str, Any])
     return sorted(
         label
         for label in set(source.get("labels") or []) & set(target.get("labels") or [])
-        if label and label not in STRUCTURAL_LABELS and not str(label).startswith("source_")
+        if label
+        and label not in STRUCTURAL_LABELS
+        and label not in FORMAT_LABEL_VALUES
+        and not str(label).startswith("source_")
     )
+
+
+def claim_tokens(node: dict[str, Any]) -> set[str]:
+    """Lightly stemmed content words of a node's title and text, excluding
+    stopwords and the conflict vocabulary itself."""
+    text = f"{node.get('title') or ''} {node.get('text') or node.get('text_preview') or ''}".lower()
+    tokens = set()
+    for token in _CLAIM_TOKEN_PATTERN.findall(text):
+        if len(token) < 3 or token in CLAIM_STOPWORDS or token in CONFLICT_LEXICON:
+            continue
+        stems = light_stems(token)
+        tokens.add(stems[0] if stems else token)
+    return tokens
+
+
+def claim_overlap(source: dict[str, Any], target: dict[str, Any]) -> float:
+    """Shared claim words as a share of the smaller node's claim words."""
+    left, right = claim_tokens(source), claim_tokens(target)
+    if not left or not right:
+        return 0.0
+    return len(left & right) / min(len(left), len(right))
 
 
 def node_conflict_text(node: dict[str, Any]) -> str:

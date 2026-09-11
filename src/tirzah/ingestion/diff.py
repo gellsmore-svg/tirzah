@@ -36,7 +36,10 @@ def diff_ingestion_trees(
     unmatched_proposed = list(proposed)
     pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
 
-    for matcher in (_match_by_keys, _match_by_hash, _match_by_title):
+    # Content identity beats position: node keys are ordinal (section-N), so
+    # inserting a section shifts every later key, and key-first matching would
+    # rebind a kept id (and its endorsement) onto different text.
+    for matcher in (_match_by_hash, _match_by_keys, _match_by_title):
         still_unmatched: list[dict[str, Any]] = []
         for proposed_node in unmatched_proposed:
             match = matcher(proposed_node, unmatched_existing)

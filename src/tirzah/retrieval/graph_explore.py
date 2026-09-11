@@ -53,7 +53,12 @@ def graph_neighborhood(
             "identity": 0,
             "endorsement": 0,
             "duplicate_edge": 0,
+            # Dropped by the caps, so "20 shown" is never read as "20 exist".
+            "node_limit": 0,
+            "branch_limit": 0,
         },
+        # Nodes whose edge fetch hit its own limit (more edges may exist).
+        "edge_fetch_truncated": 0,
     }
     object_id = parse_object_id(node_id)
     if not object_id:
@@ -69,16 +74,26 @@ def graph_neighborhood(
     frontier = [focus_payload["node_id"]]
     exclusions = diagnostics["exclusions"]
 
+    fetch_limit = max(bounded_branch * 4, 20)
     for hop in range(1, depth + 1):
         next_frontier: list[str] = []
         for current_id in frontier:
-            for edge in graph_edges_for_node(
+            current_edges = graph_edges_for_node(
                 db,
                 node_id=current_id,
                 direction=direction,
                 relation_type=relation_type,
-                limit=max(bounded_branch * 4, 20),
-            ):
+                limit=fetch_limit,
+            )
+            if len(current_edges) >= fetch_limit:
+                diagnostics["edge_fetch_truncated"] += 1
+            # branch_limit is per node: every frontier node gets its own
+            # allowance instead of the first one filling the whole hop.
+            branch_count = 0
+            for index, edge in enumerate(current_edges):
+                if branch_count >= bounded_branch:
+                    exclusions["branch_limit"] += len(current_edges) - index
+                    break
                 edge_id = str(edge.get("edge_id") or "")
                 if edge_id and edge_id in seen_edge_ids:
                     exclusions["duplicate_edge"] += 1
@@ -105,12 +120,12 @@ def graph_neighborhood(
                     continue
                 if adjacent_id not in nodes_by_id:
                     if len(nodes_by_id) >= bounded_limit + 1:
+                        exclusions["node_limit"] += 1
                         continue
                     nodes_by_id[adjacent_id] = payload
                     next_frontier.append(adjacent_id)
                 edges.append(compact_explore_edge(edge, hop=hop))
-                if len(next_frontier) >= bounded_branch:
-                    break
+                branch_count += 1
         frontier = next_frontier
         if not frontier:
             break
