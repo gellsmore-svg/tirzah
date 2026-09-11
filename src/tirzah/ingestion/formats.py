@@ -78,7 +78,15 @@ def chunk_strategy_for(kind: str) -> str:
     return CHUNK_STRATEGY.get(kind, "markdown_sections")
 
 
-def parse_structure(text: str, source_kind: str, fallback_title: str) -> list[dict[str, Any]]:
+def parse_structure(
+    text: str,
+    source_kind: str,
+    fallback_title: str,
+    analysis: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Parse ``text`` into sections. When ``analysis`` is given it is filled with
+    the canonical kind, chunk strategy and parser, plus what the parser dropped
+    or normalised, for the ingestion activity report."""
     kind = canonical_kind(source_kind)
     parsers = {
         "markdown": parse_markdown_sections,
@@ -96,12 +104,29 @@ def parse_structure(text: str, source_kind: str, fallback_title: str) -> list[di
         "csv": parse_csv_sections,
     }
     parser = parsers.get(kind, parse_markdown_sections)
-    sections = parser(text, fallback_title)
+    stats: dict[str, Any] = {}
+    if parser in (parse_markdown_sections, parse_html_sections, parse_csv_sections):
+        sections = parser(text, fallback_title, stats=stats)
+    else:
+        sections = parser(text, fallback_title)
+    if analysis is not None:
+        analysis.update(
+            {
+                "canonical_kind": kind,
+                "chunk_strategy": chunk_strategy_for(kind),
+                "parser": parser.__name__,
+                **stats,
+            }
+        )
     return sections or [section(fallback_title, text)]
 
 
-def parse_markdown_sections(text: str, fallback_title: str) -> list[dict[str, Any]]:
+def parse_markdown_sections(
+    text: str, fallback_title: str, stats: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
     body = strip_front_matter(text)
+    if stats is not None and len(body) != len(text):
+        stats["front_matter_stripped_chars"] = len(text) - len(body)
     sections: list[dict[str, Any]] = []
     current_title = fallback_title
     current_lines: list[str] = []
@@ -125,21 +150,42 @@ def strip_front_matter(text: str) -> str:
     return _FRONT_MATTER.sub("", text, count=1)
 
 
-def parse_html_sections(text: str, fallback_title: str) -> list[dict[str, Any]]:
+def parse_html_sections(
+    text: str, fallback_title: str, stats: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
     parser = HtmlOutlineParser(fallback_title)
     try:
         parser.feed(text)
         parser.close()
     except Exception:
+        if stats is not None:
+            stats["parse_fallback"] = "html_tags_stripped"
         return [section(fallback_title, strip_tags(text))]
-    return parser.sections() or [section(parser.document_title or fallback_title, parser.visible_text() or strip_tags(text))]
+    sections = parser.sections()
+    if stats is not None:
+        stats.update(parser.stats)
+    return sections or [section(parser.document_title or fallback_title, parser.visible_text() or strip_tags(text))]
 
 
 class HtmlOutlineParser(HTMLParser):
+    """Outline an HTML page into heading-led sections of paragraph blocks.
+
+    Text is accumulated raw per block and whitespace-collapsed only when the
+    section is flushed, except inside ``<pre>``, which is kept verbatim.
+    Headings gather all their inline text until the closing tag. Skipped
+    script/style and nav/footer content is counted in ``stats``.
+    """
+
     SKIP = {"script", "style", "noscript"}
     CHROME = {"nav", "footer"}
     HEADINGS = {f"h{index}" for index in range(1, 7)}
     BLOCKS = {"p", "li", "pre", "blockquote", "dt", "dd"}
+    # Structural containers: they end the current block so adjacent text in
+    # sibling containers is not run together, but open no block themselves.
+    BOUNDARIES = {
+        "div", "section", "article", "main", "header", "aside", "body",
+        "table", "tr", "td", "th", "ul", "ol", "dl", "figure", "figcaption", "hr",
+    }
 
     def __init__(self, fallback_title: str) -> None:
         super().__init__(convert_charrefs=True)
@@ -147,17 +193,28 @@ class HtmlOutlineParser(HTMLParser):
         self.document_title = ""
         self._skip_depth = 0
         self._chrome_depth = 0
+        self._pre_depth = 0
         self._in_title = False
-        self._heading_open = False
+        self._heading_parts: list[str] | None = None
         self._current_title = fallback_title
         self._blocks: list[str] = []
+        self._block_is_pre: list[bool] = []
+        self._block_open = False
         self._sections: list[dict[str, Any]] = []
+        self.stats: dict[str, int] = {
+            "dropped_chrome_elements": 0,
+            "dropped_chrome_chars": 0,
+            "skipped_script_style_chars": 0,
+            "preserved_pre_blocks": 0,
+        }
 
     def handle_starttag(self, tag: str, attrs) -> None:
         if tag in self.SKIP:
             self._skip_depth += 1
             return
         if tag in self.CHROME:
+            if not self._chrome_depth:
+                self.stats["dropped_chrome_elements"] += 1
             self._chrome_depth += 1
             return
         if tag == "title":
@@ -167,11 +224,21 @@ class HtmlOutlineParser(HTMLParser):
             return
         if tag in self.HEADINGS:
             self._flush_section()
-            self._heading_open = True
+            self._heading_parts = []
+            return
+        if tag == "br":
+            self._append("\n" if self._pre_depth else " ")
             return
         if tag in self.BLOCKS:
-            self._heading_open = False
-            self._blocks.append("")
+            self._close_heading()
+            if tag == "pre":
+                self._pre_depth += 1
+                if self._pre_depth > 1:
+                    return
+            self._start_block(is_pre=self._pre_depth > 0)
+            return
+        if tag in self.BOUNDARIES and not self._pre_depth:
+            self._block_open = False
 
     def handle_endtag(self, tag: str) -> None:
         if tag in self.SKIP and self._skip_depth:
@@ -180,33 +247,79 @@ class HtmlOutlineParser(HTMLParser):
             self._chrome_depth -= 1
         elif tag == "title":
             self._in_title = False
+        elif self._skip_depth or self._chrome_depth:
+            return
         elif tag in self.HEADINGS:
-            self._heading_open = False
+            self._close_heading()
+        elif tag in self.BLOCKS:
+            if tag == "pre" and self._pre_depth:
+                self._pre_depth -= 1
+            if not self._pre_depth:
+                self._block_open = False
+        elif tag in self.BOUNDARIES and not self._pre_depth:
+            self._block_open = False
 
     def handle_data(self, data: str) -> None:
-        if self._skip_depth or self._chrome_depth:
+        if self._skip_depth:
+            self.stats["skipped_script_style_chars"] += len(data.strip())
             return
-        text = " ".join(data.split())
-        if not text:
+        if self._chrome_depth:
+            self.stats["dropped_chrome_chars"] += len(data.strip())
             return
-        if self._in_title and not self.document_title:
-            self.document_title = text
+        if self._in_title:
+            text = " ".join(data.split())
+            if text and not self.document_title:
+                self.document_title = text
             return
-        if self._heading_open:
-            self._current_title = text
-            self._heading_open = False
+        if self._heading_parts is not None:
+            self._heading_parts.append(data)
             return
-        if self._blocks:
-            self._blocks[-1] = f"{self._blocks[-1]} {text}".strip() if self._blocks[-1] else text
-        else:
-            self._blocks.append(text)
+        if not self._pre_depth and not data.strip():
+            if self._block_open:
+                self._append(" ")
+            return
+        if not self._block_open:
+            self._start_block(is_pre=self._pre_depth > 0)
+        self._append(data)
+
+    def _start_block(self, *, is_pre: bool) -> None:
+        self._blocks.append("")
+        self._block_is_pre.append(is_pre)
+        self._block_open = True
+
+    def _append(self, data: str) -> None:
+        if not self._blocks:
+            self._start_block(is_pre=self._pre_depth > 0)
+        self._blocks[-1] += data
+
+    def _close_heading(self) -> None:
+        if self._heading_parts is None:
+            return
+        title = " ".join("".join(self._heading_parts).split())
+        if title:
+            self._current_title = title
+        self._heading_parts = None
 
     def _flush_section(self) -> None:
-        paragraphs = [block.strip() for block in self._blocks if block and block.strip()]
+        self._close_heading()
+        paragraphs = []
+        for block, is_pre in zip(self._blocks, self._block_is_pre):
+            if is_pre:
+                cleaned = block.strip("\n")
+                if cleaned.strip():
+                    paragraphs.append(cleaned)
+                    self.stats["preserved_pre_blocks"] += 1
+            else:
+                cleaned = " ".join(block.split())
+                if cleaned:
+                    paragraphs.append(cleaned)
         if paragraphs:
-            self._sections.append(section(self._current_title, "\n\n".join(paragraphs)))
+            self._sections.append(
+                section(self._current_title, "\n\n".join(paragraphs), paragraphs=paragraphs)
+            )
         self._blocks = []
-        self._heading_open = False
+        self._block_is_pre = []
+        self._block_open = False
 
     def sections(self) -> list[dict[str, Any]]:
         self._flush_section()
@@ -316,26 +429,80 @@ def _mapping_sections(payload: Any, fallback_title: str) -> list[dict[str, Any]]
     return [section(fallback_title, json.dumps(payload, indent=2, ensure_ascii=False) if payload is not None else "")]
 
 
-def parse_csv_sections(text: str, fallback_title: str) -> list[dict[str, Any]]:
+CSV_ROWS_PER_SECTION = 50
+
+
+def parse_csv_sections(
+    text: str, fallback_title: str, stats: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """One paragraph per data row as ``header: value`` pairs, in sections of
+    at most :data:`CSV_ROWS_PER_SECTION` rows. Cells past the header count are
+    kept under synthetic ``column_N`` keys, never dropped."""
     try:
-        rows = list(csv.reader(StringIO(text)))
+        rows = [row for row in csv.reader(StringIO(text)) if row]
     except csv.Error:
+        if stats is not None:
+            stats["parse_fallback"] = "csv_raw_text"
         return [section(fallback_title, text)]
     if not rows:
         return [section(fallback_title, text)]
+    if len(rows) == 1:
+        return [section(fallback_title, _csv_line(rows[0]))]
     headers = [cell.strip() for cell in rows[0]]
+    ragged = surplus = short = 0
     paragraphs = []
-    for row in rows[1:] or rows:
-        if headers and len(rows) > 1:
-            pairs = [f"{headers[index]}: {value}" for index, value in enumerate(row) if index < len(headers)]
-            paragraphs.append("; ".join(pairs) if pairs else ",".join(row))
-        else:
-            paragraphs.append(",".join(row))
-    title = fallback_title if len(rows) == 1 else f"{fallback_title} rows"
-    return [section(title, "\n\n".join(paragraphs))]
+    for row in rows[1:]:
+        if len(row) != len(headers):
+            ragged += 1
+            if len(row) > len(headers):
+                surplus += len(row) - len(headers)
+            else:
+                short += 1
+        keys = [
+            headers[index] if index < len(headers) and headers[index] else f"column_{index + 1}"
+            for index in range(len(row))
+        ]
+        paragraphs.append("; ".join(f"{key}: {_csv_value(value)}" for key, value in zip(keys, row)))
+    sections = []
+    for start in range(0, len(paragraphs), CSV_ROWS_PER_SECTION):
+        group = paragraphs[start : start + CSV_ROWS_PER_SECTION]
+        title = (
+            f"{fallback_title} rows"
+            if len(paragraphs) <= CSV_ROWS_PER_SECTION
+            else f"{fallback_title} rows {start + 1}-{start + len(group)}"
+        )
+        sections.append(section(title, "\n\n".join(group), paragraphs=group))
+    if stats is not None:
+        stats.update(
+            {
+                "csv_row_count": len(paragraphs),
+                "csv_ragged_row_count": ragged,
+                "csv_surplus_cell_count": surplus,
+                "csv_short_row_count": short,
+                "csv_section_count": len(sections),
+            }
+        )
+    return sections
 
 
-def section(title: str, text: str) -> dict[str, Any]:
+def _csv_value(value: str) -> str:
+    # Quote values that would otherwise read as a pair separator or break a paragraph.
+    return json.dumps(value, ensure_ascii=False) if any(mark in value for mark in (";", "\n", "\r")) else value
+
+
+def _csv_line(row: list[str]) -> str:
+    buffer = StringIO()
+    csv.writer(buffer).writerow(row)
+    return buffer.getvalue().rstrip("\r\n")
+
+
+def section(title: str, text: str, paragraphs: list[str] | None = None) -> dict[str, Any]:
+    """A section dict. Pass ``paragraphs`` when the caller has already split
+    the text (e.g. preformatted blocks whose blank lines are not boundaries)."""
+    if paragraphs is not None:
+        kept = [paragraph for paragraph in paragraphs if paragraph.strip()]
+        section_text = text.strip("\n")
+        return {"title": title, "text": section_text, "paragraphs": kept or [section_text]}
     paragraphs = [block.strip() for block in text.split("\n\n") if block.strip()]
     section_text = text.strip()
     return {"title": title, "text": section_text, "paragraphs": paragraphs or [section_text]}

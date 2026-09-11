@@ -22,7 +22,8 @@ class MockIngestionAdapter:
     ) -> IngestionResult:
         kind = canonical_kind(source_kind)
         title = first_heading(strip_front_matter(text)) or path.stem
-        sections = parse_structure(text, kind, title)
+        analysis: dict = {}
+        sections = parse_structure(text, kind, title, analysis=analysis)
         if kind == "html" and sections:
             title = sections[0]["title"] or title
         labels = normalized_extra_labels([*(extra_labels or []), *format_labels_for(kind)])
@@ -75,6 +76,7 @@ class MockIngestionAdapter:
             summary=summarize(text),
             nodes=nodes,
             adapter="mock",
+            source_analysis=analysis,
         )
 
 

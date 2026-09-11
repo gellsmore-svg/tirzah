@@ -143,3 +143,90 @@ def test_web_bounded_limit_clamps_both_ends() -> None:
     assert _bounded_limit(0, maximum=100) == 1
     assert _bounded_limit(-1, maximum=100) == 1
     assert _bounded_limit(10, maximum=100) == 10
+
+
+# --- #36 / #37 / #48: ingestion parsers and activity report -------------------
+
+
+def test_html_pre_whitespace_is_preserved() -> None:
+    from tirzah.ingestion.formats import parse_html_sections
+
+    code = "def main():\n    x = 1\n\n    return x"
+    [section] = parse_html_sections(f"<h2>Code</h2><pre>{code}</pre>", "fb")
+    assert section["text"] == code
+    assert section["paragraphs"] == [code]
+
+
+def test_html_heading_keeps_marked_up_text() -> None:
+    from tirzah.ingestion.formats import parse_html_sections
+
+    [section] = parse_html_sections("<h1>Install <em>Tirzah</em> now</h1><p>Body para.</p>", "fb")
+    assert section["title"] == "Install Tirzah now"
+    assert section["text"] == "Body para."
+
+
+def test_html_inline_markup_and_containers_do_not_merge_or_split_words() -> None:
+    from tirzah.ingestion.formats import parse_html_sections
+
+    [section] = parse_html_sections(
+        "<h1>T</h1><p>foo<b>bar</b> baz</p><div>hello</div><div>world</div>", "fb"
+    )
+    assert section["paragraphs"] == ["foobar baz", "hello", "world"]
+
+
+def test_html_dropped_chrome_is_counted() -> None:
+    from tirzah.ingestion.formats import parse_structure
+
+    analysis: dict = {}
+    parse_structure(
+        "<nav>Home | Docs</nav><h1>T</h1><p>Body</p><footer>(c) 2026</footer><script>x()</script>",
+        "html",
+        "fb",
+        analysis=analysis,
+    )
+    assert analysis["canonical_kind"] == "html"
+    assert analysis["chunk_strategy"] == "html_headings"
+    assert analysis["dropped_chrome_elements"] == 2
+    assert analysis["dropped_chrome_chars"] == len("Home | Docs") + len("(c) 2026")
+    assert analysis["skipped_script_style_chars"] == len("x()")
+
+
+def test_csv_keeps_cells_past_the_header_count() -> None:
+    from tirzah.ingestion.formats import parse_structure
+
+    analysis: dict = {}
+    [section] = parse_structure("a,b\n1,2,3,EXTRA\n4\n", "csv", "fb", analysis=analysis)
+    assert section["paragraphs"] == ["a: 1; b: 2; column_3: 3; column_4: EXTRA", "a: 4"]
+    assert analysis["csv_ragged_row_count"] == 2
+    assert analysis["csv_surplus_cell_count"] == 2
+    assert analysis["csv_short_row_count"] == 1
+
+
+def test_csv_quotes_separator_bearing_cells_and_chunks_large_files() -> None:
+    from tirzah.ingestion.formats import CSV_ROWS_PER_SECTION, parse_csv_sections
+
+    [section] = parse_csv_sections('a,b\n"x; y",z\n', "fb")
+    assert section["paragraphs"] == ['a: "x; y"; b: z']
+
+    rows = "\n".join(f"{index},v" for index in range(CSV_ROWS_PER_SECTION * 2 + 1))
+    sections = parse_csv_sections(f"n,v\n{rows}\n", "fb")
+    assert len(sections) == 3
+    assert sections[0]["title"] == f"fb rows 1-{CSV_ROWS_PER_SECTION}"
+    assert sum(len(item["paragraphs"]) for item in sections) == CSV_ROWS_PER_SECTION * 2 + 1
+
+
+def test_ingestion_activity_report_carries_source_analysis(tmp_path) -> None:
+    from tirzah.adapters.mock import MockIngestionAdapter
+    from tirzah.ingestion.activity import ingestion_activity_log, ingestion_activity_report
+
+    path = tmp_path / "page.html"
+    text = "<nav>menu</nav><h1>T</h1><pre>a\n  b</pre>"
+    result = MockIngestionAdapter().process(path, text, "html")
+    report = ingestion_activity_report(path=path, status="committed", result=result)
+
+    assert report["source_analysis"]["chunk_strategy"] == "html_headings"
+    assert report["source_analysis"]["dropped_chrome_elements"] == 1
+    log = ingestion_activity_log(report)
+    assert "parsed as html with the html_headings chunk strategy" in log
+    assert "1 nav/footer element(s)" in log
+    assert "Preformatted blocks kept verbatim: 1." in log
