@@ -51,14 +51,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     names ..." or "They are ..." counts as a definition of the same term,
     and "X is not A but B" denies A and asserts B. It sets aside
     definitions inside a hypothetical or reported frame: "a claim that X
-    is ...", bullets under a lead-in such as "should no longer speak as
-    though:", and sections headed "Comparator", "Objection" and the like.
-    It separates qualifications ("not merely") from denials.
+    is ...", "Readers assume X is ...", "In conventional physics, X is
+    ...", "X is often treated as ...", bullets under a lead-in such as
+    "should no longer speak as though:", and sections headed "Comparator",
+    "Objection", "Replaced assumption", "Guardrail" and the like, plus any
+    matching `runtime.definition_frame_titles`. It separates qualifications
+    ("not merely") from denials.
   - A bounded model second pass asks one closed question per term, and only
     about passages the patterns missed.
   - Pairs are ranked by explicit denial of the same content, revision
     markers, and differing definitions, weighted by how definitional each
-    sentence is ("names", "is the ..." over "is stored ..."). A denial
+    sentence is ("names", "is the ..." over "is stored ..." or a run-on
+    transcript sentence). A denial
     that matches what the other sentence contrasts the term with ("X is
     not B" beside "X is A, not B") is agreement and never pairs. Copies
     collapse, no sentence fills more than two of a term's slots, and
@@ -68,7 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (`CONFLICT` / `SAME` / `UNRELATED`)? The general contradiction prompt
     rejected real redefinitions as "different aspects". The command
     previews by default; `--apply` writes. Settings: `runtime.definition_terms`,
-    `definition_second_pass_enabled`, `definition_second_pass_limit`.
+    `definition_second_pass_enabled`, `definition_second_pass_limit`,
+    `definition_frame_titles`.
   - The confirmer and the second pass share one bounded model-call helper
     (a circuit breaker plus galeed `llm_calls` recording).
 - **Contradiction confirmation:** a local model must confirm each rule-admitted

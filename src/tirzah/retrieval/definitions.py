@@ -31,9 +31,21 @@ DEFINITION_VERBS = (
 )
 # "X is not merely Y" qualifies X rather than denying Y.
 QUALIFIERS = ("merely", "simply", "just", "only", "primarily", "mainly", "necessarily", "fundamentally")
-# Text before the term that puts the definition in a hypothetical or reported frame.
+# Text before the term that puts the definition in a hypothetical or reported
+# frame: "a claim that X is", "if X is", "Readers assume X is", "one of the
+# assumptions ... is that X is", "In conventional physics, X is".
 FRAME_PATTERN = re.compile(
-    r"\b(?:a claim that|claims? that|claiming that|if|whether|as though|as if|suppose|imagine|unless)\b", re.I
+    r"\b(?:a claim that|claims? that|claiming that|if|whether|as though|as if|suppose|imagine|unless|"
+    r"assumes?|assumed|assuming|assumptions?|believes?|believed|thinks? that|thought that|"
+    r"in (?:conventional|common|standard|mainstream|classical|popular) \w+)\b", re.I
+)
+# A body that reports how X is usually talked about rather than saying what it
+# is: "X is often treated as ...", "X is spoken of as though ...".
+REPORTED_BODY = re.compile(
+    r"^(?:(?:often|commonly|usually|typically|traditionally|conventionally|popularly|widely)\s+"
+    r"(?:treated|thought|described|seen|regarded|taken|assumed|said|spoken|understood|pictured|imagined)|"
+    r"(?:spoken of|thought of|talked about|treated|described)\s+as\s+(?:though|if))\b",
+    re.I,
 )
 # Change over time. Contrast ("A rather than B") is not revision.
 REVISION_PATTERN = re.compile(
@@ -53,7 +65,9 @@ LEAD_IN_FRAME_PATTERN = re.compile(
 TITLE_FRAME_PATTERN = re.compile(
     r"\b(?:comparators?|objections?|misreadings?|misconceptions?|myths?|failure modes?|anti-?patterns?|"
     r"rejected (?:views?|models?)|what [\w\s]{0,40} is not|errors? to avoid|as usually presented|mainstream|"
-    r"conventional|standard (?:views?|models?|accounts?)|textbook (?:views?|accounts?))\b",
+    r"conventional|standard (?:views?|models?|accounts?)|textbook (?:views?|accounts?)|"
+    r"replaced (?:assumptions?|views?|models?|claims?)|(?:old|prior|common|mainstream) assumptions?|"
+    r"guardrails?|readers?'? starting points?)\b",
     re.I,
 )
 # Verbs that introduce a definition rather than a passing predication.
@@ -63,6 +77,8 @@ _BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
 # Sentences kept either side of a definition as its context for the confirmer.
 CONTEXT_SENTENCES = 2
 CONTEXT_CHARS = 800
+# Definitions rarely run this long; run-on sentences are mostly transcribed speech.
+RUN_ON_WORDS = 60
 
 _VERB_ALT = "|".join(
     re.escape(verb) if verb == "=" else rf"{re.escape(verb)}\b"
@@ -119,18 +135,21 @@ def split_sentences(text: str) -> list[str]:
     return [sentence for sentence, _framed in _sentences_with_frames(text)]
 
 
-def extract_definitions(text: str, terms: Iterable[str], *, title: str | None = None) -> list[dict[str, Any]]:
+def extract_definitions(
+    text: str, terms: Iterable[str], *, title: str | None = None, frame_titles: Iterable[re.Pattern[str]] = ()
+) -> list[dict[str, Any]]:
     """Sentences in ``text`` that define one of ``terms``.
 
     Each definition carries ``polarity`` (``asserts``, ``denies`` or
     ``qualifies``), the defining ``verb`` and ``body``, ``framed`` (a reported,
     rejected or hypothetical view: "a claim that X is ...", a bullet under a
-    framing lead-in, or a section ``title`` such as "Comparator ..."), and
+    framing lead-in, or a section ``title`` such as "Comparator ..." or one
+    matching ``frame_titles``), and
     ``revision`` (a revision marker such as "no longer" in the sentence or the
     one after it).
     """
     sentences = _sentences_with_frames(text)
-    title_framed = bool(title and TITLE_FRAME_PATTERN.search(title))
+    title_framed = bool(title and (TITLE_FRAME_PATTERN.search(title) or any(p.search(title) for p in frame_titles)))
     found: list[dict[str, Any]] = []
     for index, (sentence, lead_framed) in enumerate(sentences):
         outer_frame = lead_framed or title_framed
@@ -159,7 +178,7 @@ def extract_definitions(text: str, terms: Iterable[str], *, title: str | None = 
             for m in re.finditer(pattern, sentence, re.I):
                 if any(start <= m.start("term") < end for start, end in denied_spans):
                     continue
-                framed = bool(FRAME_PATTERN.search(sentence[: m.start("term")]))
+                framed = bool(FRAME_PATTERN.search(sentence[: m.start("term")]) or REPORTED_BODY.match(m.group("body")))
                 found.extend(_split_denial(
                     _definition(term, sentence, _polarity(m), m.group("verb").lower(), m.group("body"),
                                 framed or outer_frame, revision, index)
@@ -234,8 +253,9 @@ def _token_overlap(a: set[str], b: set[str]) -> float:
 def definition_strength(definition: dict[str, Any], tokens: set[str]) -> float:
     """How much a sentence reads as a definition rather than a passing
     predication: strong defining verbs and "X is the/a ..." count for it;
-    "X is stored/ordered ..." and very short asserted bodies count against.
-    Short denials are normal ("X is not Y") and are not penalised."""
+    "X is stored/ordered ...", very short asserted bodies and run-on
+    sentences (transcribed speech) count against. Short denials are normal
+    ("X is not Y") and are not penalised."""
     words = definition["body"].strip().lower().split()
     first = words[0] if words else ""
     strength = 1.0 if definition["verb"] in STRONG_VERBS else 0.0
@@ -245,6 +265,8 @@ def definition_strength(definition: dict[str, Any], tokens: set[str]) -> float:
         strength -= 1.0
     if definition["polarity"] == "asserts" and len(tokens) < 3:
         strength -= 1.0
+    if len(definition["sentence"].split()) > RUN_ON_WORDS:
+        strength -= 1.5
     return strength
 
 
@@ -386,7 +408,9 @@ def _node_fields(node: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def definition_index(db: Any, terms: list[str], *, second_pass_limit: int = 20) -> dict[str, Any]:
+def definition_index(
+    db: Any, terms: list[str], *, second_pass_limit: int = 20, frame_titles: Iterable[str] = ()
+) -> dict[str, Any]:
     """Definitions of each term across active chunks and sections.
 
     Chunks are read before sections, so when a sentence appears in both, the
@@ -396,6 +420,8 @@ def definition_index(db: Any, terms: list[str], *, second_pass_limit: int = 20) 
     """
     from tirzah.models.ingestion import INACTIVE_RETRIEVAL_STATUSES
 
+    # Extra section titles (regexes) whose definitions report someone else's view.
+    patterns = [re.compile(pattern, re.I) for pattern in frame_titles]
     definitions: list[dict[str, Any]] = []
     second_pass: dict[str, list[dict[str, Any]]] = {}
     stats: dict[str, dict[str, int]] = {}
@@ -416,7 +442,8 @@ def definition_index(db: Any, terms: list[str], *, second_pass_limit: int = 20) 
         term_stats = {"nodes": len(nodes), "definitions": 0, "framed": 0, "qualified": 0}
         unrouted: list[dict[str, Any]] = []
         for node in nodes:
-            found = [d for d in extract_definitions(node.get("text") or "", [term], title=node.get("title"))
+            found = [d for d in extract_definitions(node.get("text") or "", [term], title=node.get("title"),
+                                                    frame_titles=patterns)
                      if d["term_key"] == key]
             usable = [d for d in found if not d["framed"]]
             term_stats["framed"] += len(found) - len(usable)
@@ -587,6 +614,7 @@ def definition_drift_report(
     router: Any = None,
     second_pass_limit: int = 20,
     confirmer: Any = None,
+    frame_titles: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Candidate contradictions from definitions of ``terms`` that disagree.
 
@@ -597,7 +625,8 @@ def definition_drift_report(
     ``make_contradiction_confirmer``) then judges each pair.
     """
     terms = [term for term in dict.fromkeys(t.strip() for t in terms) if term]
-    index = definition_index(db, terms, second_pass_limit=second_pass_limit if router is not None else 0)
+    index = definition_index(db, terms, second_pass_limit=second_pass_limit if router is not None else 0,
+                             frame_titles=frame_titles)
     definitions = list(index["definitions"])
     second_pass = {"enabled": router is not None, "considered": 0, "defines": 0, "not_definition": 0,
                    "unparsed": 0, "unavailable": 0}

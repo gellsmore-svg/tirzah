@@ -71,6 +71,8 @@ class RuntimeConfig(_StrictModel):
     definition_terms: list[str] = Field(default_factory=list)
     definition_second_pass_enabled: bool = True
     definition_second_pass_limit: int = Field(default=20, ge=0, le=500)
+    # Section-title regexes whose definitions report someone else's view.
+    definition_frame_titles: list[str] = Field(default_factory=list)
     # Walk Cairn plan steps in depends_on order (SPEC §4.6) instead of only
     # wrapping a monolithic ask pipeline.
     plan_interpretive_execution_enabled: bool = False

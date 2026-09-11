@@ -48,6 +48,10 @@ runtime:
   # definition_terms: []
   # definition_second_pass_enabled: true
   # definition_second_pass_limit: 20
+  # Section-title regexes (case-insensitive) whose definitions report someone
+  # else's view, on top of built-in ones such as "Comparator", "Objection",
+  # "Replaced assumption" and "Guardrail", e.g. ["general relativity", "\\bnewton\\b"].
+  # definition_frame_titles: []
   # HTTP-backed embedding adapters are not compliant for ingestion/retrieval memory operations.
   allow_http_ingestion_adapters: false
   embedding_model: nomic-embed-text:latest

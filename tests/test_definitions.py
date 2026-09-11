@@ -83,6 +83,21 @@ def test_framed_definitions_are_marked() -> None:
     assert one("AMS is not:\n- a claim that T0 is an energy store", "T0")["framed"] is True
     assert one("Those statements are not coherent if darkness is merely unlit matter.", "darkness")["framed"] is True
     assert one("Darkness is the ordered, non-expressive ground state of the substrate.", "darkness")["framed"] is False
+    [d] = extract_definitions("Readers assume time is a neutral container.", ["time"])
+    assert d["framed"] is True
+    [d] = extract_definitions("One of the quiet assumptions in modern physics is that energy is a thing we store.",
+                              ["energy"])
+    assert d["framed"] is True
+    for sentence, term in (
+        ("In conventional physics, fields are often treated as real substances filling space.", "field"),
+        ("In common usage, darkness is treated as absence of light.", "darkness"),
+        ("Fields are spoken of as though they were substances.", "field"),
+    ):
+        found = extract_definitions(sentence, [term])
+        assert found and all(d["framed"] for d in found), sentence
+    # The author's own "X is treated as Y" is still a definition.
+    [d] = extract_definitions("Electricity is treated as ordered transfer through pathways.", ["electricity"])
+    assert d["framed"] is False
 
 
 def test_lead_in_and_heading_frames() -> None:
@@ -93,10 +108,33 @@ def test_lead_in_and_heading_frames() -> None:
     assert d["framed"] is True
     [d] = extract_definitions("Gravity is a force between masses.", ["gravity"], title="Newton (as usually presented)")
     assert d["framed"] is True
+    for heading in ("Replaced Assumption / paragraph 1", "Guardrail / paragraph 2", "Reader starting point"):
+        [d] = extract_definitions("Fields are the most basic physical entities.", ["field"], title=heading)
+        assert d["framed"] is True, heading
+    [d] = extract_definitions("Fields are stable geometric states of the substrate.", ["field"],
+                              title="Replace with / paragraph 3")
+    assert d["framed"] is False
     [d] = extract_definitions("Light is a transient torsional propagation.", ["light"], title="Chapter 25 / paragraph 2")
     assert d["framed"] is False
     # A lead-in without a framing word leaves its bullets alone.
     assert one("Core terms:\n- T1 names stable identity-bearing structures.", "T1")["framed"] is False
+
+
+def test_configured_frame_titles_and_run_on_sentences() -> None:
+    import re
+
+    from tirzah.retrieval.contradictions import claim_tokens
+    from tirzah.retrieval.definitions import definition_strength
+
+    [d] = extract_definitions("Gravity is not a force.", ["gravity"], title="Einstein (General Relativity)")
+    assert d["framed"] is False
+    [d] = extract_definitions("Gravity is not a force.", ["gravity"], title="Einstein (General Relativity)",
+                              frame_titles=[re.compile("general relativity", re.I)])
+    assert d["framed"] is True
+    [short] = extract_definitions("Current is the rate of reconfiguration.", ["current"])
+    run_on = {**short, "sentence": short["sentence"] + " and so" * 40}
+    tokens = claim_tokens({"text": short["body"]})
+    assert definition_strength(run_on, tokens) == definition_strength(short, tokens) - 1.5
 
 
 def test_non_definitions_are_ignored() -> None:
@@ -254,6 +292,7 @@ def test_cli_definition_drift_wires_terms_and_defaults(monkeypatch, capsys) -> N
     assert output == {
         "ok": True, "terms": ["T1", "current"], "pairs_per_term": 5, "include_same_document": True,
         "second_pass_limit": 20, "router": None, "confirmer": None, "created_by": "user", "dry_run": True,
+        "frame_titles": [],
     }
 
 
