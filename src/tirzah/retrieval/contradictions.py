@@ -118,6 +118,74 @@ def parse_confirmation_label(text: Any) -> str:
     return match.group(1) if match else "UNPARSED"
 
 
+def bounded_model_caller(
+    runtime_config: Any,
+    *,
+    step_name: str,
+    db: Any = None,
+    session_id: str = "consolidation",
+) -> Callable[[str], tuple[str | None, dict[str, Any]]]:
+    """The model call path shared by the consolidation classifiers.
+
+    Uses ``runtime.contradiction_confirmation_{adapter,model}`` (falling back
+    to the answer adapter and its model). ``call(prompt)`` returns ``(answer,
+    info)``; ``answer`` is None when the model is unavailable, with
+    ``info["status"] == "unavailable"``. After the first failure it stops
+    calling, so a dead endpoint cannot stall a batch. Calls are recorded in
+    galeed ``llm_calls`` under ``step_name`` when ``db`` is given.
+    """
+    adapter_name = getattr(runtime_config, "contradiction_confirmation_adapter", None) or None
+    model = getattr(runtime_config, "contradiction_confirmation_model", None) or None
+    trace_id = f"{step_name.replace('_', '-')}-{uuid.uuid4().hex[:12]}"
+    state: dict[str, str | None] = {"unavailable": None}
+
+    def record(prompt: str, result: dict[str, Any], output: str | None, error: str | None) -> None:
+        if db is None:
+            return
+        try:
+            from galeed import record_llm_call
+
+            usage = result.get("usage")
+            duration = result.get("duration_ms")
+            record_llm_call(
+                db,
+                trace_id=trace_id,
+                session_id=session_id,
+                source="tirzah",
+                step_name=step_name,
+                model=result.get("model") or model,
+                prompt=prompt,
+                output=output,
+                error=error,
+                usage=usage if isinstance(usage, dict) else None,
+                duration_ms=int(duration) if duration is not None else None,
+                metadata={"role": step_name, "adapter": result.get("adapter") or adapter_name},
+                emit_event=False,
+            )
+        except Exception:
+            pass
+
+    def call(prompt: str) -> tuple[str | None, dict[str, Any]]:
+        if state["unavailable"]:
+            return None, {"status": "unavailable", "error": state["unavailable"], "call_skipped": True,
+                          "trace_id": trace_id}
+        from tirzah.adapters.answer import generate_text
+
+        try:
+            result = generate_text(runtime_config, prompt, adapter_name=adapter_name, model=model)
+        except Exception as error:
+            state["unavailable"] = str(error)
+            record(prompt, {}, None, str(error))
+            return None, {"status": "unavailable", "error": str(error), "trace_id": trace_id}
+        answer = str(result.get("answer") or "")
+        record(prompt, result, answer, None)
+        return answer, {"adapter": result.get("adapter") or adapter_name, "model": result.get("model") or model,
+                        "trace_id": trace_id}
+
+    call.trace_id = trace_id  # type: ignore[attr-defined]
+    return call
+
+
 def make_contradiction_confirmer(
     runtime_config: Any,
     *,
@@ -135,62 +203,21 @@ def make_contradiction_confirmer(
     """
     if runtime_config is None or not getattr(runtime_config, "contradiction_confirmation_enabled", True):
         return None
-    adapter_name = getattr(runtime_config, "contradiction_confirmation_adapter", None) or None
-    model = getattr(runtime_config, "contradiction_confirmation_model", None) or None
-    trace_id = f"contradiction-confirmation-{uuid.uuid4().hex[:12]}"
-    state: dict[str, str | None] = {"unavailable": None}
-
-    def record(prompt: str, result: dict[str, Any], output: str | None, error: str | None) -> None:
-        if db is None:
-            return
-        try:
-            from galeed import record_llm_call
-
-            usage = result.get("usage")
-            duration = result.get("duration_ms")
-            record_llm_call(
-                db,
-                trace_id=trace_id,
-                session_id=session_id,
-                source="tirzah",
-                step_name=CONFIRMATION_STEP_NAME,
-                model=result.get("model") or model,
-                prompt=prompt,
-                output=output,
-                error=error,
-                usage=usage if isinstance(usage, dict) else None,
-                duration_ms=int(duration) if duration is not None else None,
-                metadata={"role": CONFIRMATION_STEP_NAME, "adapter": result.get("adapter") or adapter_name},
-                emit_event=False,
-            )
-        except Exception:
-            pass
+    call = bounded_model_caller(runtime_config, step_name=CONFIRMATION_STEP_NAME, db=db, session_id=session_id)
 
     def confirm(source: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:
-        if state["unavailable"]:
-            return {"status": "unavailable", "error": state["unavailable"], "call_skipped": True}
-        from tirzah.adapters.answer import generate_text
-
-        prompt = confirmation_prompt(source, target)
-        try:
-            result = generate_text(runtime_config, prompt, adapter_name=adapter_name, model=model)
-        except Exception as error:
-            state["unavailable"] = str(error)
-            record(prompt, {}, None, str(error))
-            return {"status": "unavailable", "error": str(error)}
-        answer = str(result.get("answer") or "")
+        answer, info = call(confirmation_prompt(source, target))
+        if answer is None:
+            return info
         label = parse_confirmation_label(answer)
-        record(prompt, result, answer, None)
         return {
+            **info,
             "status": {"CONTRADICT": "confirmed", "UNPARSED": "unparsed"}.get(label, "rejected"),
             "label": label,
             "reason": answer.strip()[:300],
-            "adapter": result.get("adapter") or adapter_name,
-            "model": result.get("model") or model,
-            "trace_id": trace_id,
         }
 
-    confirm.trace_id = trace_id  # type: ignore[attr-defined]
+    confirm.trace_id = call.trace_id  # type: ignore[attr-defined]
     return confirm
 
 

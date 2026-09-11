@@ -41,6 +41,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   #58, #59).
 
 ### Added
+- **Definition drift:** `tirzah definition-drift --term T1 --term current`
+  finds `contradicts` candidates where passages define the same term
+  differently. The candidates join the existing review queue as
+  `candidate_source: definition_drift`.
+  - A deterministic pattern router extracts definitions: "X is / names /
+    = / was reframed as ...", inverted "... is what we call X", and denials
+    such as "the point is not that X is ...". A following "It no longer
+    names ..." or "They are ..." counts as a definition of the same term,
+    and "X is not A but B" denies A and asserts B. It sets aside
+    definitions inside a hypothetical or reported frame: "a claim that X
+    is ...", bullets under a lead-in such as "should no longer speak as
+    though:", and sections headed "Comparator", "Objection" and the like.
+    It separates qualifications ("not merely") from denials.
+  - A bounded model second pass asks one closed question per term, and only
+    about passages the patterns missed.
+  - Pairs are ranked by explicit denial of the same content, revision
+    markers, and differing definitions, weighted by how definitional each
+    sentence is ("names", "is the ..." over "is stored ..."). A denial
+    that matches what the other sentence contrasts the term with ("X is
+    not B" beside "X is A, not B") is agreement and never pairs. Copies
+    collapse, no sentence fills more than two of a term's slots, and
+    comparison includes pairs within one document.
+  - The local model then answers a closed question per pair: do the two
+    sentences give incompatible accounts of what the term is or names
+    (`CONFLICT` / `SAME` / `UNRELATED`)? The general contradiction prompt
+    rejected real redefinitions as "different aspects". The command
+    previews by default; `--apply` writes. Settings: `runtime.definition_terms`,
+    `definition_second_pass_enabled`, `definition_second_pass_limit`.
+  - The confirmer and the second pass share one bounded model-call helper
+    (a circuit breaker plus galeed `llm_calls` recording).
 - **Contradiction confirmation:** a local model must confirm each rule-admitted
   contradiction pair before it is queued for review, in CLI and web, for single
   and batch runs, including dry-run previews. The lexical rule measured about

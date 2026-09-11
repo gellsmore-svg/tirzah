@@ -64,6 +64,13 @@ class RuntimeConfig(_StrictModel):
     # Empty = follow answer_adapter and that adapter's configured model.
     contradiction_confirmation_adapter: str | None = None
     contradiction_confirmation_model: str | None = None
+    # Definition drift (`tirzah definition-drift`): terms whose definitions are
+    # compared across the corpus, plus a bounded model second pass (using the
+    # contradiction_confirmation adapter/model) over passages that mention a
+    # term in their heading but that the patterns did not route.
+    definition_terms: list[str] = Field(default_factory=list)
+    definition_second_pass_enabled: bool = True
+    definition_second_pass_limit: int = Field(default=20, ge=0, le=500)
     # Walk Cairn plan steps in depends_on order (SPEC §4.6) instead of only
     # wrapping a monolithic ask pipeline.
     plan_interpretive_execution_enabled: bool = False

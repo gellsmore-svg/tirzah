@@ -2101,6 +2101,113 @@ def enqueue_contradiction_candidate_batch(
     }
 
 
+def enqueue_definition_drift_candidates(
+    db: Database,
+    terms: list[str],
+    *,
+    pairs_per_term: int = 10,
+    include_same_document: bool = True,
+    second_pass_limit: int = 20,
+    router: Any = None,
+    confirmer: Any = None,
+    created_by: str = "user",
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Queue ``contradicts`` candidates from definitions of a term that disagree
+    (``candidate_source: definition_drift``). With ``confirmer`` only
+    model-confirmed pairs are queued; ``dry_run`` (the default) writes nothing."""
+    if not collection_available(db, "semantic_edge_candidates"):
+        return {"ok": False, "reason": "semantic_edge_candidates_unavailable"}
+    terms = [str(term).strip() for term in terms or [] if str(term).strip()]
+    if not terms:
+        return {"ok": False, "reason": "no_terms", "hint": "Pass --term (repeatable) or set runtime.definition_terms."}
+    from tirzah.retrieval.contradictions import CONTRADICTION_RELATION_TYPE
+    from tirzah.retrieval.definitions import DEFINITION_DRIFT_SOURCE, definition_drift_report
+
+    report = definition_drift_report(
+        db,
+        terms,
+        pairs_per_term=pairs_per_term,
+        include_same_document=include_same_document,
+        router=router,
+        second_pass_limit=second_pass_limit,
+        confirmer=confirmer,
+    )
+    now = datetime.now(timezone.utc)
+    counts = {**empty_confirmation_counts(), "would_enqueue_count": 0, "enqueued_count": 0,
+              "skipped_existing_count": 0, "skipped_invalid_count": 0}
+    documents = []
+    for candidate in report["candidates"]:
+        candidate["queued"] = False
+        confirmation = candidate.get("confirmation")
+        if confirmation is not None:
+            status = confirmation.get("status")
+            counts[CONFIRMATION_COUNT_KEYS.get(status, "confirmation_unparsed_count")] += 1
+            if status != "confirmed":
+                continue
+        source_id = parse_object_id(candidate["a"].get("node_id"))
+        target_id = parse_object_id(candidate["b"].get("node_id"))
+        if source_id is None or target_id is None or source_id == target_id:
+            counts["skipped_invalid_count"] += 1
+            continue
+        if semantic_edge_candidate_exists(db, source_id, target_id, CONTRADICTION_RELATION_TYPE):
+            counts["skipped_existing_count"] += 1
+            continue
+        counts["would_enqueue_count"] += 1
+        candidate["queued"] = not dry_run
+        documents.append(definition_drift_candidate_document(candidate, source_id, target_id, created_by=created_by, now=now))
+    if documents and not dry_run:
+        db.semantic_edge_candidates.insert_many(documents)
+        counts["enqueued_count"] = len(documents)
+    return {**report, "dry_run": dry_run, "candidate_source": DEFINITION_DRIFT_SOURCE, **counts}
+
+
+def definition_drift_candidate_document(
+    candidate: dict[str, Any],
+    source_id: object,
+    target_id: object,
+    *,
+    created_by: str,
+    now: datetime,
+) -> dict[str, Any]:
+    from tirzah.retrieval.contradictions import CONTRADICTION_RELATION_TYPE
+    from tirzah.retrieval.definitions import DEFINITION_DRIFT_SOURCE
+
+    a, b = candidate["a"], candidate["b"]
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "status": "pending",
+        "candidate_source": DEFINITION_DRIFT_SOURCE,
+        "source_node_id": source_id,
+        "target_node_id": target_id,
+        "source_document_id": parse_object_id(a.get("document_id")),
+        "target_document_id": parse_object_id(b.get("document_id")),
+        "relation_type": CONTRADICTION_RELATION_TYPE,
+        "pair_key": semantic_edge_candidate_pair_key(source_id, target_id, CONTRADICTION_RELATION_TYPE),
+        "definition_signals": {
+            "term": candidate["term"],
+            "score": candidate["score"],
+            "reasons": candidate["reasons"],
+            "body_overlap": candidate["body_overlap"],
+            "source_sentence": a.get("sentence"),
+            "target_sentence": b.get("sentence"),
+            "source_polarity": a.get("polarity"),
+            "target_polarity": b.get("polarity"),
+            "source_found_by": a.get("source"),
+            "target_found_by": b.get("source"),
+        },
+        "selection_context": {"candidate_source": DEFINITION_DRIFT_SOURCE, "term": candidate["term"]},
+        "confirmation": confirmation_record(candidate.get("confirmation"), now),
+        "source_title": a.get("title"),
+        "target_title": b.get("title"),
+        "source_origin_date": a.get("origin_date"),
+        "target_origin_date": b.get("origin_date"),
+        "created_by": created_by,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
 def contradiction_candidate_document(
     *,
     source: dict[str, Any],

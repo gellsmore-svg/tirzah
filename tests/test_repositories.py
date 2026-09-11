@@ -2521,3 +2521,58 @@ def test_contradiction_batch_preview_counts_only_confirmed_pairs(monkeypatch) ->
     assert [preview["target_node_id"] for preview in focus["candidate_previews"]] == [str(yes_id)]
     assert focus["confirmation_rejections"][0]["label"] == "COMPATIBLE"
     assert db.semantic_edge_candidates.rows == []
+
+
+def _drift_db():
+    db = FakeDb()
+    for text, title, document in (
+        ("Current = integrated vorton-slip activity crossing a section of the circuit per second.", "Vorton slip / paragraph 1", "d1"),
+        ("The point is not that current is vorton motion.", "Relation Back To Vortons / paragraph 4", "d2"),
+        ("Current relates to coupling families in material paths.", "Current Notes / paragraph 2", "d3"),
+    ):
+        db.nodes.rows.append({"_id": ObjectId(), "title": title, "text": text, "labels": ["source_chunk"],
+                              "document_id": document})
+    return db
+
+
+def test_definition_drift_previews_then_queues_only_confirmed_pairs() -> None:
+    from tirzah.db.repositories import enqueue_definition_drift_candidates
+
+    db = _drift_db()
+    routed = []
+
+    def router(term, node):
+        routed.append(node["title"])
+        return {"status": "defines", "sentence": node["text"]}
+
+    def confirmer(source, target):
+        text = source["text"] + target["text"]
+        return {"status": "confirmed" if "vorton motion" in text else "rejected", "label": "CONTRADICT", "reason": "r"}
+
+    preview = enqueue_definition_drift_candidates(db, ["current"], router=router, confirmer=confirmer)
+    assert preview["dry_run"] is True
+    assert routed == ["Current Notes / paragraph 2"]  # heading mentions the term, patterns found nothing
+    assert preview["second_pass"]["defines"] == 1
+    assert preview["would_enqueue_count"] >= 1
+    assert db.semantic_edge_candidates.rows == []
+
+    applied = enqueue_definition_drift_candidates(db, ["current"], router=router, confirmer=confirmer, dry_run=False)
+    queued = db.semantic_edge_candidates.rows
+    assert applied["enqueued_count"] == len(queued) >= 1
+    row = next(r for r in queued if "vorton motion" in r["definition_signals"]["target_sentence"]
+               + r["definition_signals"]["source_sentence"])
+    assert row["candidate_source"] == "definition_drift"
+    assert row["relation_type"] == "contradicts"
+    assert row["definition_signals"]["term"] == "current"
+    assert row["confirmation"]["status"] == "confirmed"
+
+    again = enqueue_definition_drift_candidates(db, ["current"], router=router, confirmer=confirmer, dry_run=False)
+    assert again["enqueued_count"] == 0
+    assert again["skipped_existing_count"] == applied["enqueued_count"]
+
+
+def test_definition_drift_requires_terms() -> None:
+    from tirzah.db.repositories import enqueue_definition_drift_candidates
+
+    result = enqueue_definition_drift_candidates(_drift_db(), [])
+    assert result["ok"] is False and result["reason"] == "no_terms"
