@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import calendar
+import logging
 import math
 import re
 from datetime import date, datetime, timezone
@@ -12,6 +14,12 @@ from pymongo.database import Database
 from tirzah.db.memory_store import MemoryStore, as_memory_store
 from tirzah.models.ingestion import INACTIVE_RETRIEVAL_STATUSES
 
+logger = logging.getLogger(__name__)
+
+# Atlas rejects $vectorSearch numCandidates above this.
+ATLAS_MAX_NUM_CANDIDATES = 10_000
+# Upper bound for operator-facing search limits; search_nodes scans ~5x this.
+MAX_SEARCH_LIMIT = 100
 
 SEARCH_STOPWORDS = {
     "what",
@@ -107,7 +115,10 @@ def search_nodes(
     if query:
         lexical_filters["$or"] = text_query_filters(query)
 
-    candidate_limit = max(limit * 5, 50) if query else limit
+    # Trust ranking must see the pre-truncation pool, or it can only permute a
+    # top-`limit` page it had no part in selecting.
+    trust_pool = bool(trust_ranking_enabled)
+    candidate_limit = trust_candidate_pool_limit(limit) if (query or trust_pool) else limit
     if identity:
         candidate_limit = max(candidate_limit * 2, limit * 10, 50)
     nodes = store.find_nodes(lexical_filters, sort=("created_at", -1), limit=candidate_limit)
@@ -124,36 +135,47 @@ def search_nodes(
         nodes = attach_query_similarity(nodes, query_embedding)
     if identity:
         nodes = filter_nodes_for_identity(nodes, identity)
+    trust_kwargs: dict[str, Any] = {
+        "enabled": trust_ranking_enabled,
+        "profile_id": trust_profile_id(identity, trust_weighting_profile),
+        "weight": trust_ranking_weight,
+        "max_boost": trust_ranking_max_boost,
+        "hybrid_weight": trust_ranking_hybrid_weight,
+        "source_nodes": {str(node.get("_id")): node for node in nodes} if trust_pool else None,
+    }
     if query:
         if query_embedding is not None:
-            ranked = hybrid_rank(nodes, query, limit=limit)
+            ranked = hybrid_rank(nodes, query, limit=None if trust_pool else limit)
             if ranked:  # fall back to lexical only if the relevance gate emptied the pool
                 results = [serialize_ranked_node(item) for item in ranked]
-                return apply_search_trust_ranking(
-                    store,
-                    results,
-                    enabled=trust_ranking_enabled,
-                    profile_id=trust_profile_id(identity, trust_weighting_profile),
-                    weight=trust_ranking_weight,
-                    max_boost=trust_ranking_max_boost,
-                    hybrid_weight=trust_ranking_hybrid_weight,
-                )
+                return apply_search_trust_ranking(store, results, **trust_kwargs)[:limit]
         nodes.sort(key=lambda node: node_search_sort_key(node, query), reverse=True)
     results = []
-    for node in nodes[:limit]:
+    for node in nodes if trust_pool else nodes[:limit]:
         row = serialize_node(node)
         if query:
             row["lexical_score"] = node_search_score(node, query)
         results.append(row)
-    return apply_search_trust_ranking(
-        store,
-        results,
-        enabled=trust_ranking_enabled,
-        profile_id=trust_profile_id(identity, trust_weighting_profile),
-        weight=trust_ranking_weight,
-        max_boost=trust_ranking_max_boost,
-        hybrid_weight=trust_ranking_hybrid_weight,
-    )
+    return apply_search_trust_ranking(store, results, **trust_kwargs)[:limit]
+
+
+def trust_candidate_pool_limit(limit: int) -> int:
+    """Candidate pool size ranked before truncating to ``limit``."""
+    return max(limit * 5, 50)
+
+
+def trust_source_nodes(store: MemoryStore, rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Stored nodes for serialized rows, keyed by ``node_id``: the rows omit the
+    trust signals (trust_score, verification flags, datetime timestamps)."""
+    object_ids = []
+    for row in rows:
+        try:
+            object_ids.append(ObjectId(str(row.get("node_id"))))
+        except (InvalidId, TypeError):
+            continue
+    if not object_ids:
+        return {}
+    return {str(node["_id"]): node for node in store.find_nodes({"_id": {"$in": object_ids}})}
 
 
 def trust_profile_id(identity: dict[str, Any] | None, override: str | None) -> str | None:
@@ -173,8 +195,9 @@ def apply_search_trust_ranking(
     weight: float,
     max_boost: int,
     hybrid_weight: float,
+    source_nodes: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    if not enabled:
+    if not enabled or not rows:
         return rows
     from tirzah.db.governance import get_trust_weighting_profile
     from tirzah.retrieval.trust import apply_trust_ranking
@@ -183,6 +206,8 @@ def apply_search_trust_ranking(
     db = getattr(store, "db", store)
     if profile_id:
         profile = get_trust_weighting_profile(db, profile_id)
+    if source_nodes is None:
+        source_nodes = trust_source_nodes(store, rows)
     return apply_trust_ranking(
         rows,
         enabled=True,
@@ -190,6 +215,7 @@ def apply_search_trust_ranking(
         weight=weight,
         max_boost=max_boost,
         hybrid_weight=hybrid_weight,
+        source_nodes=source_nodes,
     )
 
 
@@ -513,7 +539,11 @@ def collect_vector_candidate_nodes(
     scan_limit = bounded_embedding_candidate_scan_limit(scan_limit, limit)
     rows = None
     if index_name:
-        rows = atlas_vector_search_nodes(store, payload, index_name=index_name, limit=scan_limit)
+        rows = atlas_vector_search_nodes(
+            store, payload, index_name=index_name, limit=scan_limit, filters=filters
+        )
+        if rows is not None:
+            rows = reapply_candidate_filters(store, rows, base_filters)
     if rows is None:
         rows = list(store.find_nodes(base_filters, limit=scan_limit))
     candidates: list[dict[str, Any]] = []
@@ -548,26 +578,52 @@ def atlas_vector_search_nodes(
     *,
     index_name: str,
     limit: int,
+    filters: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]] | None:
+    """Atlas ``$vectorSearch`` candidates, or None to fall back to a scan.
+
+    Query filters go into the stage's ``filter`` so scoping happens inside the
+    index; if Atlas rejects it (e.g. a field not declared as a filter field in
+    the index definition) the search retries unfiltered. Callers must still
+    re-apply the full filter (:func:`reapply_candidate_filters`).
+    """
     collection = getattr(getattr(store, "db", None), "nodes", None)
     aggregate = getattr(collection, "aggregate", None)
     if not callable(aggregate):
         return None
-    pipeline = [
-        {
-            "$vectorSearch": {
-                "index": index_name,
-                "path": "embedding.vector",
-                "queryVector": query_embedding["vector"],
-                "numCandidates": max(limit * 20, 100),
-                "limit": max(limit, 1),
-            }
-        }
-    ]
-    try:
-        return list(aggregate(pipeline))
-    except Exception:
-        return None
+    num_candidates = min(max(limit * 20, 100), ATLAS_MAX_NUM_CANDIDATES)
+    stage = {
+        "index": index_name,
+        "path": "embedding.vector",
+        "queryVector": query_embedding["vector"],
+        "numCandidates": num_candidates,
+        "limit": max(1, min(limit, num_candidates)),
+    }
+    prefilter = {key: value for key, value in (filters or {}).items() if not key.startswith("embedding.")}
+    attempts = [{**stage, "filter": prefilter}, stage] if prefilter else [stage]
+    for attempt in attempts:
+        try:
+            return list(aggregate([{"$vectorSearch": attempt}]))
+        except Exception:
+            logger.warning(
+                "Atlas $vectorSearch failed (index=%s, filtered=%s)",
+                index_name,
+                "filter" in attempt,
+                exc_info=True,
+            )
+    return None
+
+
+def reapply_candidate_filters(
+    store: MemoryStore, rows: list[dict[str, Any]], filters: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Re-check Atlas hits against the full Mongo filter (the prefilter may have
+    been skipped or only partially supported), preserving Atlas's order."""
+    ids = [row.get("_id") for row in rows if row.get("_id") is not None]
+    if not ids:
+        return []
+    allowed = {node["_id"]: node for node in store.find_nodes({**filters, "_id": {"$in": ids}})}
+    return [allowed[node_id] for node_id in ids if node_id in allowed]
 
 
 def attach_query_similarity(
@@ -1917,3 +1973,46 @@ def parse_iso_date(value: str | None) -> str | None:
 
     parsed = parse_human_date(value)
     return parsed.isoformat() if parsed else None
+
+
+_YEAR_RE = re.compile(r"^\d{4}$")
+_YEAR_MONTH_RE = re.compile(r"^(\d{4})-(\d{2})$")
+ORIGIN_BOUND_FORMATS = "YYYY, YYYY-MM or YYYY-MM-DD"
+
+
+def normalize_origin_bound(value: str | None, *, bound: str) -> str | None:
+    """Normalise an origin-date filter bound to ``YYYY-MM-DD``, or None when
+    unparseable. Partial dates widen to the period they name: as an ``after``
+    bound "2026" is 2026-01-01, as a ``before`` bound 2026-12-31 (a raw "2026"
+    compares lexicographically below every 2026-MM-DD origin date)."""
+    text = str(value).strip() if value is not None else ""
+    if not text:
+        return None
+    if _YEAR_RE.match(text):
+        return f"{text}-01-01" if bound == "after" else f"{text}-12-31"
+    match = _YEAR_MONTH_RE.match(text)
+    if match:
+        year, month = int(match.group(1)), int(match.group(2))
+        if not 1 <= month <= 12:
+            return None
+        day = 1 if bound == "after" else calendar.monthrange(year, month)[1]
+        return f"{year:04d}-{month:02d}-{day:02d}"
+    return parse_iso_date(text)
+
+
+def origin_filter_bounds(
+    origin_after: str | None, origin_before: str | None
+) -> tuple[str | None, str | None, list[dict[str, Any]]]:
+    """Normalise both origin bounds for CLI/web search and report any bound that
+    was given but could not be parsed, instead of silently dropping it."""
+    after = normalize_origin_bound(origin_after, bound="after")
+    before = normalize_origin_bound(origin_before, bound="before")
+    ignored = [
+        {"field": field, "value": raw, "reason": "unparseable_date", "expected": ORIGIN_BOUND_FORMATS}
+        for field, raw, parsed in (
+            ("origin_after", origin_after, after),
+            ("origin_before", origin_before, before),
+        )
+        if raw not in (None, "") and parsed is None
+    ]
+    return after, before, ignored

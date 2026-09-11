@@ -7,7 +7,8 @@ from pymongo.database import Database
 from tirzah.db.schema import ensure_required_collections
 
 # Bump when index set changes so ensure_indexes re-runs (review M4).
-_INDEX_SCHEMA_VERSION = 2
+# 3: nodes.origin_date and (document_id, origin_date) for origin-date filters.
+_INDEX_SCHEMA_VERSION = 3
 
 
 LABEL_DEFINITIONS = [
@@ -117,7 +118,10 @@ DEFAULT_TRUST_WEIGHTING_PROFILES = [
         "stability_importance": 0.5,
         "context_sensitivity": 0.4,
         "verification_importance": 0.5,
-        "default_decay_half_life_days": None,
+        # Non-null so recency actually participates in trust ranking; long,
+        # because corpora here are historical. seed_governance_defaults $sets
+        # this on every ensure_indexes, so existing installs pick it up.
+        "default_decay_half_life_days": 1825,
     }
 ]
 
@@ -161,6 +165,8 @@ def ensure_indexes(db: Database, *, force: bool = False) -> None:
     db.nodes.create_index([("embedding.model", 1), ("embedding.dimensions", 1), ("document_id", 1)])
     db.nodes.create_index("ingestion_epoch")
     db.nodes.create_index("created_at")
+    db.nodes.create_index("origin_date")
+    db.nodes.create_index([("document_id", 1), ("origin_date", 1)])
     db.nodes.create_index("usage_score")
     db.nodes.create_index("last_used_at")
     db.graph_edges.create_index([("source_node_id", 1), ("relation_type", 1)])

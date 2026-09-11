@@ -168,30 +168,54 @@ def apply_trust_ranking(
     max_boost: int = 20,
     hybrid_weight: float = 0.15,
     now: datetime | None = None,
+    source_nodes: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    """Re-rank rows by trust/temporal signals.
+
+    ``source_nodes`` maps ``node_id`` to the stored node; when present the
+    diagnostic scores the stored node, because serialized rows omit
+    ``trust_score``, verification flags and datetime-typed timestamps.
+    """
     if not enabled or not rows:
         return rows
+    source_nodes = source_nodes or {}
     ranked = []
-    hybrid = any(row.get("hybrid_score") is not None for row in rows)
+    hybrid_count = sum(1 for row in rows if row.get("hybrid_score") is not None)
+    # A pool mixing hybrid (0..1) and lexical (unbounded int) rows must not sort
+    # the two raw scales together: normalise lexical to 0..1 and use the unit boost.
+    mixed = 0 < hybrid_count < len(rows)
+    max_lexical = max((float(row.get("lexical_score") or 0) for row in rows), default=0.0) or 1.0
+    decay_active = positive_float_or_none((profile or {}).get("default_decay_half_life_days")) is not None
     for index, row in enumerate(rows):
         updated = dict(row)
         updated["rank_before"] = index
-        diagnostic = trust_temporal_diagnostic(updated, profile=profile, now=now)
-        if hybrid and updated.get("hybrid_score") is not None:
+        signals = source_nodes.get(str(row.get("node_id"))) or updated
+        diagnostic = trust_temporal_diagnostic(signals, profile=profile, now=now)
+        if updated.get("hybrid_score") is not None:
+            scale = "hybrid"
             primary = float(updated["hybrid_score"])
-            boost = trust_ranking_unit_boost(diagnostic["score"], weight=hybrid_weight)
-            after = round(primary + boost, 6)
+        elif mixed:
+            scale = "lexical_normalized"
+            primary = round(float(updated.get("lexical_score") or 0) / max_lexical, 6)
         else:
+            scale = "lexical"
             primary = float(updated.get("lexical_score") or 0)
+        if scale == "lexical":
             boost = trust_ranking_boost(diagnostic["score"], max_boost=max_boost, weight=weight)
             after = primary + boost
+        else:
+            boost = trust_ranking_unit_boost(diagnostic["score"], weight=hybrid_weight)
+            after = round(primary + boost, 6)
         updated["trust_ranking"] = {
             "primary_score": primary,
+            "score_scale": scale,
             "trust_score": diagnostic["score"],
             "trust_boost": boost,
             "ranking_score_before": primary,
             "ranking_score_after": after,
             "profile_id": (profile or {}).get("weighting_profile_id"),
+            # False means recency is a constant and cannot change any ordering.
+            "temporal_decay_active": decay_active,
             "components": diagnostic.get("components"),
         }
         ranked.append(updated)
@@ -235,17 +259,22 @@ def verification_score(node: dict[str, Any]) -> float:
     return 0.0
 
 
+NEUTRAL_RECENCY = 0.5
+
+
 def temporal_recency_component(
     timestamp: Any,
     half_life_days: Any,
     now: datetime,
 ) -> float:
     half_life = positive_float_or_none(half_life_days)
-    if not timestamp or not half_life:
+    if not half_life:
         return 1.0
-    if not isinstance(timestamp, datetime):
-        return 1.0
-    age_seconds = max(0.0, (aware_utc(now) - aware_utc(timestamp)).total_seconds())
+    parsed = timestamp_or_none(timestamp)
+    if parsed is None:
+        # Undated under an active decay: neutral, not maximally fresh.
+        return NEUTRAL_RECENCY
+    age_seconds = max(0.0, (aware_utc(now) - aware_utc(parsed)).total_seconds())
     age_days = age_seconds / 86400.0
     return bounded_float(pow(0.5, age_days / half_life))
 
@@ -271,6 +300,17 @@ def positive_float_or_none(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def timestamp_or_none(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return None
 
 
 def aware_utc(value: datetime) -> datetime:

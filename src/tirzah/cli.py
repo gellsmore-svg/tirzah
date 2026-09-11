@@ -80,7 +80,8 @@ from tirzah.retrieval.queries import (
     graph_edges_for_node,
     list_documents,
     node_context,
-    parse_iso_date,
+    MAX_SEARCH_LIMIT,
+    origin_filter_bounds,
     parse_iso_datetime,
     render_context_document,
     search_nodes,
@@ -2166,6 +2167,9 @@ def main() -> None:
         query_embedding, embedding_diagnostic = query_embedding_with_diagnostic(
             config.runtime, args.query
         )
+        origin_after, origin_before, ignored_filters = origin_filter_bounds(
+            args.origin_after, args.origin_before
+        )
         payload = {
             "ok": True,
             "nodes": search_nodes(
@@ -2176,9 +2180,9 @@ def main() -> None:
                 document_id=args.document_id,
                 created_after=parse_iso_datetime(args.created_after),
                 created_before=parse_iso_datetime(args.created_before),
-                origin_after=parse_iso_date(args.origin_after),
-                origin_before=parse_iso_date(args.origin_before),
-                limit=args.limit,
+                origin_after=origin_after,
+                origin_before=origin_before,
+                limit=max(1, min(args.limit, MAX_SEARCH_LIMIT)),
                 query_embedding=query_embedding,
                 vector_search_index=config.runtime.vector_search_index or None,
                 vector_scan_limit=config.runtime.hybrid_vector_scan_limit,
@@ -2189,8 +2193,13 @@ def main() -> None:
                 trust_ranking_hybrid_weight=config.runtime.trust_ranking_hybrid_weight,
             ),
         }
+        diagnostics = {}
         if embedding_diagnostic:
-            payload["diagnostics"] = {"query_embedding": embedding_diagnostic}
+            diagnostics["query_embedding"] = embedding_diagnostic
+        if ignored_filters:
+            diagnostics["ignored_filters"] = ignored_filters
+        if diagnostics:
+            payload["diagnostics"] = diagnostics
         print(json.dumps(payload, indent=2))
         return
 

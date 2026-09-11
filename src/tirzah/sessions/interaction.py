@@ -1460,12 +1460,16 @@ def ranked_focus_matches(
     cleaned_query = normalize_query_text(query)
     assembly = build_query_assembly(cleaned_query)
     extra = {"query_embedding": query_embedding} if query_embedding is not None else {}
+    from tirzah.retrieval.queries import trust_candidate_pool_limit
+
+    # Trust ranking ranks the widened pool; the final slice trims to `limit`.
+    trust_enabled = bool(getattr(runtime_config, "trust_ranking_enabled", False))
     matches = search_nodes(
         db,
         query=cleaned_query,
         label=label,
         document_id=document_id,
-        limit=limit,
+        limit=trust_candidate_pool_limit(limit) if trust_enabled else limit,
         **extra,
     )
     if cleaned_query:
@@ -1508,7 +1512,7 @@ def ranked_focus_matches(
         for row in matches
     ]
     scored_matches.sort(key=lambda row: row["match_score"], reverse=True)
-    return finalize_trust_ranking(db, scored_matches[:limit], runtime_config=runtime_config, identity=None)
+    return finalize_trust_ranking(db, scored_matches, runtime_config=runtime_config, identity=None)[:limit]
 
 
 def active_document_reference_query(query: str) -> bool:
@@ -2230,8 +2234,8 @@ def execute_tool_calls(
                     query=arguments.get("query"),
                     original_query=original_query,
                     label=arguments.get("label"),
-                    origin_after=arguments.get("origin_after"),
-                    origin_before=arguments.get("origin_before"),
+                    origin_after=tool_origin_date_argument(arguments, "origin_after"),
+                    origin_before=tool_origin_date_argument(arguments, "origin_before"),
                     limit=bounded_limit(arguments.get("limit"), default=5),
                     session_id=session_id,
                     runtime_config=runtime_config,
@@ -2365,6 +2369,27 @@ def tool_argument_error(tool: str, field: str) -> ToolUsageError:
         f"{tool} requires {field}.",
         f"Call {tool} with arguments matching this spec: {json.dumps(spec.get('arguments') or {})}",
     )
+
+
+def tool_origin_date_argument(arguments: dict[str, Any], field: str) -> str | None:
+    """Normalise a search_nodes origin bound. A malformed date raises an
+    instructional error; passed through raw it would compare lexicographically
+    in Mongo and silently narrow the results to nothing."""
+    from tirzah.retrieval.queries import ORIGIN_BOUND_FORMATS, normalize_origin_bound
+
+    value = arguments.get(field)
+    if value in (None, ""):
+        return None
+    parsed = normalize_origin_bound(
+        str(value), bound="before" if field == "origin_before" else "after"
+    )
+    if parsed is None:
+        spec = tool_spec_by_name("search_nodes")
+        raise ToolUsageError(
+            f"search_nodes {field} must be a date ({ORIGIN_BOUND_FORMATS}); got {value!r}.",
+            f"Call search_nodes with arguments matching this spec: {json.dumps(spec.get('arguments') or {})}",
+        )
+    return parsed
 
 
 def tool_error_result(index: int, tool: str, arguments: dict[str, Any], error: Exception) -> dict[str, Any]:
@@ -2501,6 +2526,15 @@ def execute_search_nodes_tool(
         "vector_search_index": getattr(runtime_config, "vector_search_index", None) or None,
         "vector_scan_limit": getattr(runtime_config, "hybrid_vector_scan_limit", None),
     }
+    from tirzah.retrieval.queries import trust_candidate_pool_limit
+
+    # Trust ranking must see the pre-truncation pool, or it can only permute
+    # the top-`limit` page; `matches[:limit]` below trims it back.
+    search_limit = (
+        trust_candidate_pool_limit(limit)
+        if getattr(runtime_config, "trust_ranking_enabled", False)
+        else limit
+    )
     if identity:
         unrestricted_sample = search_nodes(
             db,
@@ -2521,7 +2555,7 @@ def execute_search_nodes_tool(
             label=label,
             origin_after=origin_after,
             origin_before=origin_before,
-            limit=limit,
+            limit=search_limit,
             identity=identity,
             **vector_kwargs,
         )
@@ -2532,7 +2566,7 @@ def execute_search_nodes_tool(
             label=label,
             origin_after=origin_after,
             origin_before=origin_before,
-            limit=limit,
+            limit=search_limit,
             **vector_kwargs,
         )
     details: dict[str, Any] = {

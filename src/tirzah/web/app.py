@@ -85,7 +85,8 @@ from tirzah.retrieval.queries import (
     embedding_candidate_report,
     expand_graph_paths,
     expand_proximity,
-    parse_iso_date,
+    MAX_SEARCH_LIMIT,
+    origin_filter_bounds,
     graph_edges_for_node,
     list_documents,
     search_nodes,
@@ -451,6 +452,12 @@ def _authorized_api_token(request: Request, token: str) -> bool:
     return False
 
 
+def _bounded_limit(value: int, *, maximum: int) -> int:
+    """Clamp a query-string ``limit`` to 1..maximum. Unclamped, a huge limit
+    multiplies into the Mongo candidate scan and ``-1`` reaches ``rows[:-1]``."""
+    return max(1, min(int(value), maximum))
+
+
 def _prompt_budget_snapshot(config) -> dict[str, Any]:
     from tirzah.retrieval.budget import resolve_budget_plan
 
@@ -630,7 +637,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/documents")
     def documents(limit: int = 10) -> dict[str, Any]:
-        return {"ok": True, "documents": list_documents(db, limit=limit)}
+        return {"ok": True, "documents": list_documents(db, limit=_bounded_limit(limit, maximum=200))}
 
     @app.get("/api/documents/{document_id}/rebuild-diff")
     def document_rebuild_diff(document_id: str) -> dict[str, Any]:
@@ -1008,15 +1015,18 @@ def create_app() -> FastAPI:
         query_embedding, embedding_diagnostic = query_embedding_with_diagnostic(
             config.runtime, query or None
         )
+        normalized_after, normalized_before, ignored_filters = origin_filter_bounds(
+            origin_after, origin_before
+        )
         payload: dict[str, Any] = {
             "ok": True,
             "nodes": search_nodes(
                 db,
                 query=query or None,
                 label=label,
-                origin_after=parse_iso_date(origin_after),
-                origin_before=parse_iso_date(origin_before),
-                limit=limit,
+                origin_after=normalized_after,
+                origin_before=normalized_before,
+                limit=_bounded_limit(limit, maximum=MAX_SEARCH_LIMIT),
                 query_embedding=query_embedding,
                 vector_search_index=config.runtime.vector_search_index or None,
                 vector_scan_limit=config.runtime.hybrid_vector_scan_limit,
@@ -1027,8 +1037,13 @@ def create_app() -> FastAPI:
                 trust_ranking_hybrid_weight=config.runtime.trust_ranking_hybrid_weight,
             ),
         }
+        diagnostics: dict[str, Any] = {}
         if embedding_diagnostic:
-            payload["diagnostics"] = {"query_embedding": embedding_diagnostic}
+            diagnostics["query_embedding"] = embedding_diagnostic
+        if ignored_filters:
+            diagnostics["ignored_filters"] = ignored_filters
+        if diagnostics:
+            payload["diagnostics"] = diagnostics
         return payload
 
     @app.post("/api/documents/{document_id}/origin-date")
@@ -1512,7 +1527,7 @@ def create_app() -> FastAPI:
             "ok": True,
             "exchanges": recent_exchanges(
                 db,
-                limit=limit,
+                limit=_bounded_limit(limit, maximum=200),
                 session_id=session_id,
                 query_text=q,
                 adapter=adapter,
@@ -1537,7 +1552,9 @@ def create_app() -> FastAPI:
         limit: int = 500,
     ) -> dict[str, Any]:
         """Replay persisted process events for a trace/session (dev-log initial load / poll)."""
-        events = list_trace_events(db, trace_id=trace_id, session_id=session_id, limit=limit)
+        events = list_trace_events(
+            db, trace_id=trace_id, session_id=session_id, limit=_bounded_limit(limit, maximum=5000)
+        )
         return {"ok": True, "traceId": trace_id, "sessionId": session_id, "events": events}
 
     @app.get("/api/trace/stream")
@@ -1834,7 +1851,7 @@ def create_app() -> FastAPI:
                 step_name=step_name,
                 status=status,
                 since=since,
-                limit=limit,
+                limit=_bounded_limit(limit, maximum=1000),
                 include_payloads=payloads,
             ),
         }
