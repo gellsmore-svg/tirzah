@@ -2445,6 +2445,8 @@ def reformulation_kwargs(runtime_config: Any | None) -> dict[str, Any]:
         kwargs["per_term"] = runtime_config.near_match_per_term
     if getattr(runtime_config, "near_match_max_candidates", None) is not None:
         kwargs["near_match_limit"] = runtime_config.near_match_max_candidates
+    if getattr(runtime_config, "query_synonyms", None) is not None:
+        kwargs["synonyms"] = runtime_config.query_synonyms
     return kwargs
 
 
@@ -2894,6 +2896,7 @@ def build_query_assembly(
     min_score: float | None = None,
     per_term: int | None = None,
     near_match_limit: int | None = None,
+    synonyms: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     ranking_query = combined_query_text(query, original_query)
     if not ranking_query:
@@ -2931,6 +2934,7 @@ def build_query_assembly(
         min_score=min_score if min_score is not None else NEAR_MATCH_MIN_SCORE,
         per_term=per_term if per_term is not None else DEFAULT_NEAR_MATCH_PER_TERM,
         limit=near_match_limit if near_match_limit is not None else DEFAULT_NEAR_MATCH_MAX_CANDIDATES,
+        synonyms=synonyms,
     )
 
 

@@ -8,6 +8,10 @@ DEFAULT_NEAR_MATCH_MIN_SCORE = 0.78
 DEFAULT_NEAR_MATCH_PER_TERM = 3
 DEFAULT_NEAR_MATCH_MAX_CANDIDATES = 8
 
+# Interim stand-in for the REQ-SEM-04 semantic map, which does not exist yet
+# (REQ-SEM-01..04 stay unsatisfied): a tiny table of Tirzah's own vocabulary,
+# not derived from any corpus. runtime.query_synonyms replaces it per install
+# until sense clusters and feedback-weighted term associations are built.
 QUERY_SYNONYMS = {
     "memory": ["recall", "remembrance"],
     "document": ["source", "file"],
@@ -37,14 +41,31 @@ def light_stems(term: str) -> list[str]:
     return dedupe_preserve_order(stems)
 
 
-def synonym_hints(term: str, vocabulary: list[str] | None = None) -> list[str]:
+def synonym_table(synonyms: dict[str, list[str]] | None = None) -> dict[str, list[str]]:
+    """The synonym table in force: ``synonyms`` (runtime.query_synonyms) when
+    given, else the interim built-in :data:`QUERY_SYNONYMS`."""
+    if synonyms is None:
+        return QUERY_SYNONYMS
+    return {
+        str(key).lower(): [str(value) for value in values or []]
+        for key, values in synonyms.items()
+        if str(key).strip()
+    }
+
+
+def synonym_hints(
+    term: str,
+    vocabulary: list[str] | None = None,
+    synonyms: dict[str, list[str]] | None = None,
+) -> list[str]:
     key = term.lower()
     vocab = {item.lower() for item in vocabulary or []}
+    table = synonym_table(synonyms)
     hints = []
-    for synonym in QUERY_SYNONYMS.get(key, []):
+    for synonym in table.get(key, []):
         if not vocab or synonym.lower() in vocab:
             hints.append(synonym)
-    for source, targets in QUERY_SYNONYMS.items():
+    for source, targets in table.items():
         if key in {item.lower() for item in targets} and (not vocab or source in vocab):
             hints.append(source)
     return dedupe_preserve_order(hints)
@@ -73,6 +94,7 @@ def near_match_terms(
     min_score: float = DEFAULT_NEAR_MATCH_MIN_SCORE,
     limit: int = DEFAULT_NEAR_MATCH_MAX_CANDIDATES,
     per_term: int = DEFAULT_NEAR_MATCH_PER_TERM,
+    synonyms: dict[str, list[str]] | None = None,
 ) -> list[dict[str, Any]]:
     matches: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -97,7 +119,7 @@ def near_match_terms(
                         "reason": "light_stem",
                     }
                 )
-        for synonym in synonym_hints(source_term, list(vocabulary_by_key)):
+        for synonym in synonym_hints(source_term, list(vocabulary_by_key), synonyms):
             ranked.append(
                 {
                     "source_term": source_term,
@@ -149,6 +171,7 @@ def enrich_query_assembly(
     min_score: float = DEFAULT_NEAR_MATCH_MIN_SCORE,
     per_term: int = DEFAULT_NEAR_MATCH_PER_TERM,
     limit: int = DEFAULT_NEAR_MATCH_MAX_CANDIDATES,
+    synonyms: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     lexical_terms = list(assembly.get("lexical_terms") or [])
     vocab = vocabulary or []
@@ -158,15 +181,16 @@ def enrich_query_assembly(
         min_score=min_score,
         limit=limit,
         per_term=per_term,
+        synonyms=synonyms,
     )
     stems = []
     for term in lexical_terms:
         for stem in light_stems(term):
             stems.append({"source_term": term, "stem": stem})
-    synonyms = []
+    synonym_rows = []
     for term in lexical_terms:
-        for synonym in synonym_hints(term, vocab):
-            synonyms.append(
+        for synonym in synonym_hints(term, vocab, synonyms):
+            synonym_rows.append(
                 {
                     "source_term": term,
                     "candidate_term": synonym,
@@ -175,7 +199,9 @@ def enrich_query_assembly(
             )
     assembly["near_match_terms"] = near_matches
     assembly["stemmed_terms"] = stems
-    assembly["synonym_terms"] = synonyms
+    assembly["synonym_terms"] = synonym_rows
+    # Traces say which table expanded the query: not a semantic map (REQ-SEM-04).
+    assembly["synonym_table"] = "runtime.query_synonyms" if synonyms is not None else "interim_builtin"
     assembly["reformulated_query"] = reformulated_query(
         assembly.get("ranking_query"),
         lexical_terms,

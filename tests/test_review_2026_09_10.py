@@ -235,6 +235,26 @@ def test_ingestion_activity_report_carries_source_analysis(tmp_path) -> None:
     assert "Preformatted blocks kept verbatim: 1." in log
 
 
+# --- #49: synonym table is config-loadable and labelled interim --------------
+
+
+def test_query_synonyms_are_config_loadable_and_labelled_interim() -> None:
+    from tirzah.config import RuntimeConfig
+    from tirzah.sessions.interaction import build_query_assembly, reformulation_kwargs
+
+    builtin = build_query_assembly("graph of vortons")
+    assert builtin["synonym_table"] == "interim_builtin"
+    assert "network" in [row["candidate_term"] for row in builtin["synonym_terms"]]
+
+    runtime = RuntimeConfig(query_synonyms={"Vorton": ["hopfion"]})
+    configured = build_query_assembly("vorton charge", **reformulation_kwargs(runtime))
+    assert configured["synonym_table"] == "runtime.query_synonyms"
+    assert [row["candidate_term"] for row in configured["synonym_terms"]] == ["hopfion"]
+
+    emptied = build_query_assembly("graph", synonyms={})
+    assert emptied["synonym_terms"] == []
+
+
 # --- #35: rebuild records the checksum of the file it actually read ---------
 
 
