@@ -8,6 +8,8 @@ on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
+  # Called by release.yml so a tag cannot publish from a red tree.
+  workflow_call:
 
 jobs:
   pytest:

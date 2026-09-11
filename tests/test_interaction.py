@@ -4405,7 +4405,11 @@ def test_answer_query_deep_mode_dispatch(monkeypatch) -> None:
             "trace": [{"step": "stop", "reason": "planner_stop"}],
         },
     )
-    monkeypatch.setattr(deep, "synthesize_answer", lambda *a, **k: "deep answer")
+    # The phased flow calls synthesize_answer_result (full adapter payload),
+    # not the str-returning synthesize_answer wrapper.
+    monkeypatch.setattr(
+        deep, "synthesize_answer_result", lambda *a, **k: {"answer": "deep answer"}
+    )
     monkeypatch.setattr(interaction, "save_exchange", lambda *a, **k: "exch-deep")
     config = AppConfig(runtime=RuntimeConfig(retrieval_mode="deep", answer_adapter="fake"))
 
