@@ -1,8 +1,10 @@
 # Requirements Index
 
-Last updated: 2026-06-15
+Last updated: 2026-09-11
 
 This file is a compact implementation index for `LLM_Memory_Architecture_Requirements_v0.3.md`.
+
+**Authoritative document.** `docs/consolidated-requirements-and-design.md` is the single review entry point for product requirements and design. `docs/current-product-requirements-and-design.md` (2026-05-29) is a historical input that was folded into it; where the two differ, the consolidated document wins.
 
 Current product-level requirements and implementation design are consolidated in `docs/consolidated-requirements-and-design.md`. That document should be used as the review entry point when assessing the present UI, answer behavior, ingestion transparency, retrieval guardrails, governance direction, repository rebuild requirements, and near-term product design. Code organization boundaries are tracked in `docs/code-module-boundaries.md`. Filed review artifacts live in `docs/reviews/`; their actionable findings are folded into `docs/v1-known-limitations.md`, `docs/improvements-and-enhancements.md`, and the consolidated design.
 
@@ -33,8 +35,8 @@ Current product-level requirements and implementation design are consolidated in
 | Area | Requirement IDs | Implementation Notes |
 |---|---|---|
 | REM process | REQ-CON-01, REQ-CON-02 | Scheduled background process. |
-| Semantic map | REQ-CON-03 to REQ-CON-05, REQ-SEM-01 to REQ-SEM-04 | Sense clusters, polysemy support, snapshots, synonym expansion. |
-| Low-confidence edge review | REQ-CON-06 | Default threshold in design is 5.0. |
+| Semantic map | REQ-CON-03 to REQ-CON-05, REQ-SEM-01 to REQ-SEM-04 | Sense clusters, polysemy support, snapshots, synonym expansion. **Not built; REQ-SEM-01 to REQ-SEM-04 are unsatisfied.** Query expansion uses an interim synonym table (`retrieval/reformulate.py`, replaceable via `runtime.query_synonyms`) that is a stand-in, not the semantic map. |
+| Low-confidence edge review | REQ-CON-06 | The 5.0 default threshold in the design (DQ-004) was never implemented. Low-confidence edges are reviewed through the semantic-edge candidate queue (label-overlap, embedding-similarity and contradiction sources); every candidate needs explicit human acceptance. |
 | Embedding pre-clustering | REQ-CON-07 | Gemma confirms candidate clusters after embedding search. |
 
 ## Retrieval And Context Compilation
@@ -56,7 +58,7 @@ Current product-level requirements and implementation design are consolidated in
 | Session ingestion | REQ-SCO-02, REQ-SCO-03 | Session IDs and project/session clusters. |
 | Prompt iteration records | REQ-SCO-01 to REQ-SCO-03 | Initial `session_continuity` records persist the latest/recent prompt cycle per session with prompt, domains, exchange ID, focus/used/active nodes, controller decision, evidence summary, answer preview, and process-trace summary. CLI/API/work-mode panel inspection exists; richer record expansion and prompt seeding remain open. |
 | Continuity-critical flag | REQ-SCO-04, REQ-SCO-05 | Flag, not label type; must survive compression. |
-| Restart state | REQ-SCO-06, REQ-SCO-07 | Graph node is source of truth; `.restart.md` is rendered view. |
+| Restart state | REQ-SCO-06, REQ-SCO-07 | Graph node is source of truth; `.restart.md` is rendered view. **Open:** `tirzah restart-render` renders session-continuity records, but the working-copy `.restart.md` is hand-maintained notes rather than a render of a graph node. |
 | Endorsement | REQ-END-01 to REQ-END-05 | Natural language endorsement, chunk-level writes, clarify if ambiguous. |
 | Active document registry | REQ-ADR-01 to REQ-ADR-03 | Needed for endorsement and retrieval resolution. |
 
@@ -71,3 +73,17 @@ Current product-level requirements and implementation design are consolidated in
 | Hardware baseline | REQ-NFR-03 | 32GB RAM target, GTX 3060 mobile, 8GB initial constraint noted. |
 | Storage | REQ-NFR-04 | MongoDB adjacency-list graph. |
 | Evaluation | REQ-NFR-05, REQ-NFR-06 | Compare to brute force; expect cold-start underperformance. |
+
+## Capabilities Shipped 2026-09-10 (Requirement Mapping)
+
+These capabilities shipped without requirement ids. Each is mapped here to the existing requirements it serves. None has a dedicated REQ id of its own; the mapping is recorded so a capability is not mistaken for a newly satisfied requirement.
+
+| Capability | Requirement IDs | Status |
+|---|---|---|
+| Origin dates as a filter and ranking axis | REQ-ING-08, REQ-ING-09; consolidated *Chronological Corpus Processing* | Implemented. Operator-reviewed dates survive rebuilds; `origin_date` is indexed. |
+| Targeted (diff) rebuild | REQ-ING-09, REQ-END-02, REQ-END-05, REQ-FAI-05; consolidated *Repository Refresh* | Implemented: content-first node matching, reviewed edges preserved, endorsement reset when content changes, non-destructive rollback. |
+| Per-model prompt budgets | REQ-CTX-01, REQ-CTX-03 | Implemented for direct, agentic and deep modes, resolved against the model selected for the request. |
+| Budget-skip summaries | REQ-CTX-01; PRD *LLM Transparency* | Implemented. Summary provenance is re-stamped when a rebuild regenerates the text. |
+| Contradiction candidates | REQ-CON-02; DQ-005 | Implemented as review candidates only. Admission requires disagreement evidence; see DQ-005. |
+| Multi-format ingestion (HTML, code, JSON, YAML, CSV) | REQ-ING-03; consolidated *Source Authority* | Implemented. Parser transformations are reported in the ingestion activity log (`source_analysis`). |
+| Graph exploration (CLI and web) | REQ-RET-01, REQ-RET-02, REQ-UI-01 to REQ-UI-06 | Implemented as an inspection view; node and branch caps are reported as exclusions. |
