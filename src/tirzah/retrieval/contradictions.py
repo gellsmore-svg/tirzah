@@ -75,8 +75,8 @@ FORMAT_LABEL_VALUES = frozenset(label for labels in FORMAT_LABELS.values() for l
 
 
 # Second stage: a local model confirms each rule-admitted pair before it is
-# queued. Prompt validated 2026-09-11 at 45/48 on labelled claim pairs
-# (gemma4:latest and gemma4:e2b).
+# queued. The "NOT contradictions" list names the false positives seen on a
+# live corpus (2026-09-11); validate any change against labelled pairs.
 CONFIRMATION_PROMPT = """You are checking a research-notes corpus for contradictions.
 
 Passage A:
@@ -86,6 +86,12 @@ Passage B:
 {b}
 
 Do these passages make claims that contradict each other, meaning both cannot be true about the same subject?
+These are NOT contradictions:
+- a rule or instruction, and a note that some material does not follow it yet;
+- two rules or statements that agree, even when worded differently or one is more specific;
+- status snapshots such as scores, version numbers or file paths recorded at different times;
+- passages about different aspects of the same topic.
+Two claims about how something is or works that cannot both be true ARE a contradiction, even if one is older.
 Answer on the first line with exactly one word:
 CONTRADICT - they assert incompatible things about the same subject
 COMPATIBLE - they agree, restate each other, or cover different aspects without conflict
