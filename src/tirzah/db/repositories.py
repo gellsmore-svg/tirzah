@@ -1659,6 +1659,50 @@ def enqueue_vector_semantic_edge_candidates(
     }
 
 
+def batch_focus_nodes(
+    db: Database,
+    filters: dict[str, Any],
+    *,
+    limit: int,
+    excluded_node_keys: set[str],
+    after_node_id: str | None = None,
+) -> dict[str, Any]:
+    """Focus nodes for a candidate-batch sweep, in deterministic ``_id`` order.
+
+    Exclusions (root nodes, inactive nodes, ``excluded_node_keys``) are applied
+    before the limit, so an excluded node is replaced rather than shrinking the
+    batch. Pass the returned ``next_after_node_id`` back as ``after_node_id`` to
+    continue the sweep; ``exhausted`` turns True once no focus nodes remain.
+    """
+    query = {**filters, "status": {"$nin": list(INACTIVE_RETRIEVAL_STATUSES)}}
+    if after_node_id:
+        after = parse_object_id(after_node_id)
+        if after is None:
+            return {"ok": False, "reason": "invalid_after_node_id", "after_node_id": after_node_id}
+        query["_id"] = {"$gt": after}
+    nodes: list[dict[str, Any]] = []
+    skipped = {"source_root": 0, "excluded_node_key": 0}
+    exhausted = True
+    for node in db.nodes.find(query).sort("_id", 1):
+        if "source_root" in (node.get("labels") or []):
+            skipped["source_root"] += 1
+            continue
+        if str(node.get("node_key") or "") in excluded_node_keys:
+            skipped["excluded_node_key"] += 1
+            continue
+        if len(nodes) >= limit:
+            exhausted = False
+            break
+        nodes.append(node)
+    return {
+        "ok": True,
+        "nodes": nodes,
+        "next_after_node_id": None if exhausted or not nodes else str(nodes[-1]["_id"]),
+        "exhausted": exhausted,
+        "skipped": skipped,
+    }
+
+
 def enqueue_vector_semantic_edge_candidate_batch(
     db: Database,
     label: str | None = None,
@@ -1672,6 +1716,7 @@ def enqueue_vector_semantic_edge_candidate_batch(
     candidate_scan_limit: int | None = None,
     exclude_node_keys: list[str] | None = None,
     dry_run: bool = False,
+    after_node_id: str | None = None,
 ) -> dict[str, Any]:
     if not collection_available(db, "semantic_edge_candidates"):
         return {"ok": False, "reason": "semantic_edge_candidates_unavailable"}
@@ -1699,15 +1744,16 @@ def enqueue_vector_semantic_edge_candidate_batch(
     bounded_focus_limit = max(1, min(int(focus_limit or 25), 200))
     bounded_candidates_per_node = bounded_candidate_limit(candidates_per_node)
     excluded_node_keys = {str(key) for key in (exclude_node_keys or []) if str(key)}
-    focus_nodes = []
-    for node in db.nodes.find(filters).limit(bounded_focus_limit):
-        if "source_root" in (node.get("labels") or []):
-            continue
-        if node.get("status") == "superseded":
-            continue
-        if str(node.get("node_key") or "") in excluded_node_keys:
-            continue
-        focus_nodes.append(node)
+    sweep = batch_focus_nodes(
+        db,
+        filters,
+        limit=bounded_focus_limit,
+        excluded_node_keys=excluded_node_keys,
+        after_node_id=after_node_id,
+    )
+    if not sweep["ok"]:
+        return sweep
+    focus_nodes = sweep["nodes"]
 
     totals = {
         "candidate_count": 0,
@@ -1774,6 +1820,10 @@ def enqueue_vector_semantic_edge_candidate_batch(
             "min_similarity": threshold,
             "candidate_scan_limit": candidate_scan_limit,
             "exclude_node_keys": sorted(excluded_node_keys),
+            "excluded_focus_counts": sweep["skipped"],
+            "after_node_id": after_node_id,
+            "next_after_node_id": sweep["next_after_node_id"],
+            "exhausted": sweep["exhausted"],
             "dry_run": dry_run,
         },
         **totals,
@@ -1787,7 +1837,7 @@ def enqueue_contradiction_candidates(
     limit: int = 10,
     include_same_document: bool = False,
     created_by: str = "user",
-    min_similarity: float = 0.82,
+    min_similarity: float | None = None,
     max_similarity: float = 0.97,
     candidate_scan_limit: int | None = None,
 ) -> dict[str, Any]:
@@ -1805,7 +1855,7 @@ def enqueue_contradiction_candidates(
         CONTRADICTION_RELATION_TYPE,
         DEFAULT_CONTRADICTION_MAX_SIMILARITY,
         DEFAULT_CONTRADICTION_MIN_SIMILARITY,
-        MIN_CONTRADICTION_CUES,
+        CONTRADICTION_ADMISSION_RULE,
         contradiction_candidate_nodes,
     )
 
@@ -1863,7 +1913,7 @@ def enqueue_contradiction_candidates(
         "relation_type": relation,
         "min_similarity": min_threshold,
         "max_similarity": max_threshold,
-        "min_cues": MIN_CONTRADICTION_CUES,
+        "admission_rule": CONTRADICTION_ADMISSION_RULE,
         "candidate_count": len(candidates),
         "enqueued_count": len(inserted),
         "skipped_existing_count": skipped_existing,
@@ -1879,11 +1929,12 @@ def enqueue_contradiction_candidate_batch(
     candidates_per_node: int = 2,
     include_same_document: bool = False,
     created_by: str = "user",
-    min_similarity: float = 0.82,
+    min_similarity: float | None = None,
     max_similarity: float = 0.97,
     candidate_scan_limit: int | None = None,
     exclude_node_keys: list[str] | None = None,
     dry_run: bool = False,
+    after_node_id: str | None = None,
 ) -> dict[str, Any]:
     if not collection_available(db, "semantic_edge_candidates"):
         return {"ok": False, "reason": "semantic_edge_candidates_unavailable"}
@@ -1893,7 +1944,7 @@ def enqueue_contradiction_candidate_batch(
         CONTRADICTION_RELATION_TYPE,
         DEFAULT_CONTRADICTION_MAX_SIMILARITY,
         DEFAULT_CONTRADICTION_MIN_SIMILARITY,
-        MIN_CONTRADICTION_CUES,
+        CONTRADICTION_ADMISSION_RULE,
     )
 
     relation = CONTRADICTION_RELATION_TYPE
@@ -1920,15 +1971,16 @@ def enqueue_contradiction_candidate_batch(
     bounded_focus_limit = max(1, min(int(focus_limit or 25), 200))
     bounded_candidates_per_node = bounded_candidate_limit(candidates_per_node)
     excluded_node_keys = {str(key) for key in (exclude_node_keys or []) if str(key)}
-    focus_nodes = []
-    for node in db.nodes.find(filters).limit(bounded_focus_limit):
-        if "source_root" in (node.get("labels") or []):
-            continue
-        if node.get("status") == "superseded":
-            continue
-        if str(node.get("node_key") or "") in excluded_node_keys:
-            continue
-        focus_nodes.append(node)
+    sweep = batch_focus_nodes(
+        db,
+        filters,
+        limit=bounded_focus_limit,
+        excluded_node_keys=excluded_node_keys,
+        after_node_id=after_node_id,
+    )
+    if not sweep["ok"]:
+        return sweep
+    focus_nodes = sweep["nodes"]
 
     totals = {
         "candidate_count": 0,
@@ -1995,9 +2047,13 @@ def enqueue_contradiction_candidate_batch(
             "created_by": created_by,
             "min_similarity": min_threshold,
             "max_similarity": max_threshold,
-            "min_cues": MIN_CONTRADICTION_CUES,
+            "admission_rule": CONTRADICTION_ADMISSION_RULE,
             "candidate_scan_limit": candidate_scan_limit,
             "exclude_node_keys": sorted(excluded_node_keys),
+            "excluded_focus_counts": sweep["skipped"],
+            "after_node_id": after_node_id,
+            "next_after_node_id": sweep["next_after_node_id"],
+            "exhausted": sweep["exhausted"],
             "dry_run": dry_run,
         },
         **totals,
@@ -2021,7 +2077,7 @@ def contradiction_candidate_document(
 ) -> dict[str, Any]:
     from tirzah.retrieval.contradictions import (
         CONTRADICTION_CANDIDATE_SOURCE,
-        MIN_CONTRADICTION_CUES,
+        CONTRADICTION_ADMISSION_RULE,
         compact_node_provenance,
     )
 
@@ -2046,7 +2102,7 @@ def contradiction_candidate_document(
             "candidate_source": CONTRADICTION_CANDIDATE_SOURCE,
             "min_similarity": min_similarity,
             "max_similarity": max_similarity,
-            "min_cues": MIN_CONTRADICTION_CUES,
+            "admission_rule": CONTRADICTION_ADMISSION_RULE,
             "include_same_document": include_same_document,
             "requested_limit": requested_limit,
             "embedding_model": candidate.get("embedding_model"),

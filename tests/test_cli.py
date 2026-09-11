@@ -2104,6 +2104,7 @@ def test_cli_enqueue_vector_semantic_batch_command(monkeypatch, capsys) -> None:
         "candidate_scan_limit": 500,
         "exclude_node_keys": ["section-1"],
         "dry_run": True,
+        "after_node_id": None,
     }
 
 
@@ -2163,6 +2164,7 @@ def test_cli_enqueue_profile_semantic_batch_alias(monkeypatch, capsys) -> None:
         "candidate_scan_limit": 500,
         "exclude_node_keys": ["section-1"],
         "dry_run": True,
+        "after_node_id": None,
     }
 
 
@@ -2394,6 +2396,7 @@ def test_cli_enqueue_contradiction_batch_command(monkeypatch, capsys) -> None:
         "candidate_scan_limit": 400,
         "exclude_node_keys": ["section-1"],
         "dry_run": True,
+        "after_node_id": None,
     }
 
 

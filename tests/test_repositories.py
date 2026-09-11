@@ -1084,7 +1084,7 @@ def test_enqueue_contradiction_candidates_stores_dates_and_provenance(monkeypatc
     assert row["source_provenance"]["source_path"] == "archive/source.md"
     assert row["target_provenance"]["source_path"] == "archive/target.md"
     assert row["contradiction_signals"]["cue_count"] == 3
-    assert row["selection_context"]["min_cues"] == 2
+    assert "negation" in row["selection_context"]["admission_rule"]
 
     duplicate = enqueue_contradiction_candidates(db, node_id=str(source_id))
     assert duplicate["enqueued_count"] == 0
@@ -2413,3 +2413,44 @@ def test_ingestion_rejects_unknown_parent_key_before_writing() -> None:
         raise AssertionError("Expected IngestionStructureError for an unresolved parent_key.")
     assert db.documents.rows == []
     assert db.nodes.rows == []
+
+
+def test_contradiction_batch_replaces_excluded_focus_nodes_and_pages(monkeypatch) -> None:
+    # #65: exclusions used to shrink the batch (limit applied before them),
+    # and with no cursor a sweep could never reach past its first page.
+    db = FakeDb()
+    ids = []
+    for index in range(1, 7):
+        node_id = ObjectId()
+        ids.append(node_id)
+        db.nodes.rows.append(
+            {
+                "_id": node_id,
+                "node_key": f"k{index}",
+                "title": f"Node {index}",
+                "labels": ["source_chunk"],
+                "text": f"text {index}",
+                "embedding": {"model": "mock", "dimensions": 2},
+            }
+        )
+    monkeypatch.setattr(
+        "tirzah.retrieval.contradictions.contradiction_candidate_nodes", lambda _db, node_id, **_kwargs: []
+    )
+
+    first = enqueue_contradiction_candidate_batch(db, focus_limit=3, exclude_node_keys=["k1", "k2"], dry_run=True)
+
+    assert [row["node_id"] for row in first["focus_results"]] == [str(node_id) for node_id in ids[2:5]]
+    assert first["scope"]["focus_node_count"] == 3
+    assert first["scope"]["excluded_focus_counts"]["excluded_node_key"] == 2
+    assert first["scope"]["exhausted"] is False
+    assert first["scope"]["next_after_node_id"] == str(ids[4])
+
+    second = enqueue_contradiction_candidate_batch(
+        db, focus_limit=3, dry_run=True, after_node_id=first["scope"]["next_after_node_id"]
+    )
+    assert [row["node_id"] for row in second["focus_results"]] == [str(ids[5])]
+    assert second["scope"]["exhausted"] is True
+    assert second["scope"]["next_after_node_id"] is None
+
+    bad = enqueue_contradiction_candidate_batch(db, dry_run=True, after_node_id="not-an-id")
+    assert bad == {"ok": False, "reason": "invalid_after_node_id", "after_node_id": "not-an-id"}

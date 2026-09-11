@@ -661,6 +661,7 @@ def add_enqueue_profile_batch_arguments(command: argparse.ArgumentParser) -> Non
     command.add_argument("--min-similarity", type=float, default=0.75)
     command.add_argument("--candidate-scan-limit", type=int, default=None)
     command.add_argument("--exclude-node-key", action="append", default=[])
+    command.add_argument("--after-node-id", default=None, help="Resume a sweep after this focus node id.")
     command.add_argument("--dry-run", action="store_true")
     command.add_argument("--format", choices=["json", "text"], default="json")
 
@@ -668,7 +669,7 @@ def add_enqueue_profile_batch_arguments(command: argparse.ArgumentParser) -> Non
 def add_contradiction_candidate_arguments(command: argparse.ArgumentParser) -> None:
     command.add_argument("node_id")
     command.add_argument("--include-same-document", action="store_true")
-    command.add_argument("--min-similarity", type=float, default=0.82)
+    command.add_argument("--min-similarity", type=float, default=None)
     command.add_argument("--max-similarity", type=float, default=0.97)
     command.add_argument("--limit", type=int, default=10)
     command.add_argument("--candidate-scan-limit", type=int, default=None)
@@ -679,7 +680,7 @@ def add_enqueue_contradiction_candidate_arguments(command: argparse.ArgumentPars
     command.add_argument("node_id")
     command.add_argument("--include-same-document", action="store_true")
     command.add_argument("--created-by", default="user")
-    command.add_argument("--min-similarity", type=float, default=0.82)
+    command.add_argument("--min-similarity", type=float, default=None)
     command.add_argument("--max-similarity", type=float, default=0.97)
     command.add_argument("--limit", type=int, default=10)
     command.add_argument("--candidate-scan-limit", type=int, default=None)
@@ -692,10 +693,14 @@ def add_enqueue_contradiction_batch_arguments(command: argparse.ArgumentParser) 
     command.add_argument("--candidates-per-node", type=int, default=2)
     command.add_argument("--include-same-document", action="store_true")
     command.add_argument("--created-by", default="user")
-    command.add_argument("--min-similarity", type=float, default=0.82)
+    command.add_argument("--min-similarity", type=float, default=None)
     command.add_argument("--max-similarity", type=float, default=0.97)
     command.add_argument("--candidate-scan-limit", type=int, default=None)
     command.add_argument("--exclude-node-key", action="append", default=[])
+    command.add_argument("--after-node-id", default=None, help="Resume a sweep after this focus node id.")
+    # Preview by default, like POST /api/review/enqueue-contradiction-batch;
+    # --apply writes pending review rows. --dry-run is accepted for old scripts.
+    command.add_argument("--apply", action="store_true")
     command.add_argument("--dry-run", action="store_true")
     command.add_argument("--format", choices=["json", "text"], default="json")
 
@@ -712,16 +717,18 @@ def render_contradiction_candidates_text(report: dict) -> str:
         [
             (
                 f"band: {diagnostics.get('min_similarity')} <= similarity < "
-                f"{diagnostics.get('max_similarity')} | min cues {diagnostics.get('min_cues')}"
+                f"{diagnostics.get('max_similarity')}"
             ),
+            f"rule: {diagnostics.get('admission_rule')}",
             (
                 f"considered: {diagnostics.get('considered_count', 0)} embedding neighbors | "
                 f"returned {diagnostics.get('returned_count', 0)}"
             ),
             (
                 "excluded: "
+                f"{exclusions.get('below_min_similarity', 0)} below similarity floor, "
                 f"{exclusions.get('above_max_similarity', 0)} near-duplicate similarity, "
-                f"{exclusions.get('insufficient_cues', 0)} below cue bar, "
+                f"{exclusions.get('no_disagreement_evidence', 0)} without disagreement evidence, "
                 f"{exclusions.get('missing_target', 0)} missing target"
             ),
         ]
@@ -2401,6 +2408,7 @@ def main() -> None:
             candidate_scan_limit=args.candidate_scan_limit,
             exclude_node_keys=args.exclude_node_key,
             dry_run=args.dry_run,
+            after_node_id=args.after_node_id,
         )
         if args.format == "text":
             print(render_vector_semantic_batch_text(result))
@@ -2458,7 +2466,8 @@ def main() -> None:
             max_similarity=args.max_similarity,
             candidate_scan_limit=args.candidate_scan_limit,
             exclude_node_keys=args.exclude_node_key,
-            dry_run=args.dry_run,
+            dry_run=not args.apply,
+            after_node_id=args.after_node_id,
         )
         if args.format == "text":
             print(render_contradiction_batch_text(result))

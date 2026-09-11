@@ -250,6 +250,7 @@ class EnqueueVectorSemanticBatchRequest(BaseModel):
     candidate_scan_limit: int | None = None
     exclude_node_keys: list[str] = []
     dry_run: bool = True
+    after_node_id: str | None = None
 
 
 class EnqueueContradictionBatchRequest(BaseModel):
@@ -259,11 +260,12 @@ class EnqueueContradictionBatchRequest(BaseModel):
     candidates_per_node: int = 2
     include_same_document: bool = False
     created_by: str = "web"
-    min_similarity: float = 0.82
+    min_similarity: float | None = None
     max_similarity: float = 0.97
     candidate_scan_limit: int | None = None
     exclude_node_keys: list[str] = []
     dry_run: bool = True
+    after_node_id: str | None = None
 
 
 class CreateProcessRunRequest(BaseModel):
@@ -946,6 +948,7 @@ def create_app() -> FastAPI:
             candidate_scan_limit=request.candidate_scan_limit,
             exclude_node_keys=request.exclude_node_keys,
             dry_run=request.dry_run,
+            after_node_id=request.after_node_id,
         )
 
     @app.get("/api/review/contradiction-candidates")
@@ -953,7 +956,7 @@ def create_app() -> FastAPI:
         node_id: str,
         limit: int = 10,
         include_same_document: bool = False,
-        min_similarity: float = 0.82,
+        min_similarity: float | None = None,
         max_similarity: float = 0.97,
         candidate_scan_limit: int | None = None,
     ) -> dict[str, Any]:
@@ -984,6 +987,7 @@ def create_app() -> FastAPI:
             candidate_scan_limit=request.candidate_scan_limit,
             exclude_node_keys=request.exclude_node_keys,
             dry_run=request.dry_run,
+            after_node_id=request.after_node_id,
         )
 
     @app.post("/api/review/semantic-edge-candidate")
