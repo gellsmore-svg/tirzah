@@ -34,6 +34,12 @@ runtime:
   # trust_ranking_weight: 1.0
   # trust_ranking_max_boost: 20
   # trust_ranking_hybrid_weight: 0.15
+  # Contradiction candidates: a local model must confirm each rule-admitted pair
+  # before it is queued for review (fails closed if the model is unavailable).
+  # Empty adapter/model = follow answer_adapter and its configured model.
+  # contradiction_confirmation_enabled: true
+  # contradiction_confirmation_adapter:
+  # contradiction_confirmation_model:
   # HTTP-backed embedding adapters are not compliant for ingestion/retrieval memory operations.
   allow_http_ingestion_adapters: false
   embedding_model: nomic-embed-text:latest

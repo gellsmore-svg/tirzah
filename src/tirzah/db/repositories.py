@@ -40,6 +40,26 @@ SYMMETRIC_SEMANTIC_RELATION_TYPES = {"related_to", "contradicts"}
 REVIEWED_EDGE_ADAPTER = "user_review"
 # origin_date_source values that record a human decision a rebuild must keep.
 OPERATOR_DATE_SOURCES = {"operator"}
+# Contradiction-candidate confirmation verdict status -> result counter.
+CONFIRMATION_COUNT_KEYS = {
+    "confirmed": "confirmed_count",
+    "rejected": "rejected_by_confirmation_count",
+    "unavailable": "confirmation_unavailable_count",
+    "unparsed": "confirmation_unparsed_count",
+}
+
+
+def empty_confirmation_counts() -> dict[str, int]:
+    return {key: 0 for key in CONFIRMATION_COUNT_KEYS.values()}
+
+
+def confirmation_record(confirmation: dict[str, Any] | None, now: datetime) -> dict[str, Any]:
+    """The verdict stamped on a queued contradiction candidate."""
+    if confirmation is None:
+        return {"status": "not_run"}
+    record = {key: confirmation.get(key) for key in ("status", "label", "reason", "adapter", "model", "trace_id")}
+    record["confirmed_at"] = now
+    return record
 
 
 class IngestionStructureError(ValueError):
@@ -1840,7 +1860,11 @@ def enqueue_contradiction_candidates(
     min_similarity: float | None = None,
     max_similarity: float = 0.97,
     candidate_scan_limit: int | None = None,
+    confirmer: Any = None,
 ) -> dict[str, Any]:
+    """Queue contradiction candidates for review. With ``confirmer`` (see
+    ``make_contradiction_confirmer``) only pairs the local model confirms are
+    queued; the rest are counted, never written."""
     if not collection_available(db, "semantic_edge_candidates"):
         return {"ok": False, "reason": "semantic_edge_candidates_unavailable"}
     source_id = parse_object_id(node_id)
@@ -1881,6 +1905,7 @@ def enqueue_contradiction_candidates(
     inserted = []
     skipped_existing = 0
     skipped_invalid = 0
+    confirmation_counts = empty_confirmation_counts()
     for candidate in candidates:
         target_id = parse_object_id(candidate.get("node_id"))
         if target_id is None:
@@ -1889,10 +1914,18 @@ def enqueue_contradiction_candidates(
         if semantic_edge_candidate_exists(db, source_id, target_id, relation):
             skipped_existing += 1
             continue
+        confirmation = None
+        if confirmer is not None:
+            confirmation = confirmer(source, db.nodes.find_one({"_id": target_id}) or candidate)
+            status = confirmation.get("status")
+            confirmation_counts[CONFIRMATION_COUNT_KEYS.get(status, "confirmation_unparsed_count")] += 1
+            if status != "confirmed":
+                continue
         inserted.append(
             contradiction_candidate_document(
                 source=source,
                 candidate=candidate,
+                confirmation=confirmation,
                 source_id=source_id,
                 target_id=target_id,
                 relation=relation,
@@ -1914,10 +1947,12 @@ def enqueue_contradiction_candidates(
         "min_similarity": min_threshold,
         "max_similarity": max_threshold,
         "admission_rule": CONTRADICTION_ADMISSION_RULE,
+        "confirmation": "llm" if confirmer is not None else "off",
         "candidate_count": len(candidates),
         "enqueued_count": len(inserted),
         "skipped_existing_count": skipped_existing,
         "skipped_invalid_count": skipped_invalid,
+        **confirmation_counts,
     }
 
 
@@ -1935,6 +1970,7 @@ def enqueue_contradiction_candidate_batch(
     exclude_node_keys: list[str] | None = None,
     dry_run: bool = False,
     after_node_id: str | None = None,
+    confirmer: Any = None,
 ) -> dict[str, Any]:
     if not collection_available(db, "semantic_edge_candidates"):
         return {"ok": False, "reason": "semantic_edge_candidates_unavailable"}
@@ -1989,6 +2025,7 @@ def enqueue_contradiction_candidate_batch(
         "skipped_existing_count": 0,
         "skipped_invalid_count": 0,
     }
+    totals.update(empty_confirmation_counts())
     focus_results = []
     dry_run_pair_keys: set[str] = set()
     for node in focus_nodes:
@@ -2002,6 +2039,7 @@ def enqueue_contradiction_candidate_batch(
                 max_similarity=max_threshold,
                 candidate_scan_limit=candidate_scan_limit,
                 batch_pair_keys=dry_run_pair_keys,
+                confirmer=confirmer,
             )
             for key in totals:
                 totals[key] += int(result.get(key) or 0)
@@ -2016,6 +2054,7 @@ def enqueue_contradiction_candidate_batch(
             min_similarity=min_threshold,
             max_similarity=max_threshold,
             candidate_scan_limit=candidate_scan_limit,
+            confirmer=confirmer,
         )
         for key in totals:
             totals[key] += int(result.get(key) or 0)
@@ -2048,6 +2087,7 @@ def enqueue_contradiction_candidate_batch(
             "min_similarity": min_threshold,
             "max_similarity": max_threshold,
             "admission_rule": CONTRADICTION_ADMISSION_RULE,
+            "confirmation": "llm" if confirmer is not None else "off",
             "candidate_scan_limit": candidate_scan_limit,
             "exclude_node_keys": sorted(excluded_node_keys),
             "excluded_focus_counts": sweep["skipped"],
@@ -2072,6 +2112,7 @@ def contradiction_candidate_document(
     now: datetime,
     min_similarity: float,
     max_similarity: float,
+    confirmation: dict[str, Any] | None = None,
     include_same_document: bool,
     requested_limit: int,
 ) -> dict[str, Any]:
@@ -2109,6 +2150,7 @@ def contradiction_candidate_document(
             "embedding_dimensions": candidate.get("embedding_dimensions"),
         },
         "contradiction_signals": candidate.get("contradiction_signals") or {},
+        "confirmation": confirmation_record(confirmation, now),
         "source_origin_date": candidate.get("source_origin_date") or source.get("origin_date"),
         "source_origin_date_source": candidate.get("source_origin_date_source")
         or source.get("origin_date_source"),
@@ -2137,11 +2179,15 @@ def contradiction_candidate_batch_dry_run_result(
     max_similarity: float,
     candidate_scan_limit: int | None,
     batch_pair_keys: set[str] | None = None,
+    confirmer: Any = None,
 ) -> dict[str, Any]:
     from tirzah.retrieval.contradictions import (
         CONTRADICTION_RELATION_TYPE,
         contradiction_candidate_nodes,
     )
+
+    confirmation_counts = empty_confirmation_counts()
+    rejections: list[dict[str, Any]] = []
     from tirzah.retrieval.queries import shared_wording_report
 
     source_id = node.get("_id")
@@ -2173,6 +2219,23 @@ def contradiction_candidate_batch_dry_run_result(
             skipped_existing += 1
             continue
         batch_pair_keys.add(pair_key)
+        confirmation = None
+        if confirmer is not None:
+            confirmation = confirmer(node, db.nodes.find_one({"_id": target_id}) or candidate)
+            status = confirmation.get("status")
+            confirmation_counts[CONFIRMATION_COUNT_KEYS.get(status, "confirmation_unparsed_count")] += 1
+            if status != "confirmed":
+                # Shown so the operator can see what the model filtered out.
+                rejections.append(
+                    {
+                        "target_node_id": str(target_id),
+                        "target_title": candidate.get("title"),
+                        "status": status,
+                        "label": confirmation.get("label"),
+                        "reason": confirmation.get("reason") or confirmation.get("error"),
+                    }
+                )
+                continue
         target_text = str(candidate.get("text_preview") or candidate.get("text") or "")
         shared_wording = shared_wording_report(source_text, target_text)
         previews.append(
@@ -2194,6 +2257,7 @@ def contradiction_candidate_batch_dry_run_result(
                 "embedding_model": candidate.get("embedding_model"),
                 "embedding_dimensions": candidate.get("embedding_dimensions"),
                 "contradiction_signals": candidate.get("contradiction_signals") or {},
+                "confirmation": confirmation or {"status": "not_run"},
                 "source_origin_date": candidate.get("source_origin_date"),
                 "target_origin_date": candidate.get("target_origin_date"),
                 "origin_date_delta_days": candidate.get("origin_date_delta_days"),
@@ -2213,6 +2277,9 @@ def contradiction_candidate_batch_dry_run_result(
         "skipped_invalid_count": skipped_invalid,
         "reason": None,
         "candidate_previews": previews,
+        "confirmation": "llm" if confirmer is not None else "off",
+        "confirmation_rejections": rejections,
+        **confirmation_counts,
     }
 
 

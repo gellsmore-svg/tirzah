@@ -2454,3 +2454,70 @@ def test_contradiction_batch_replaces_excluded_focus_nodes_and_pages(monkeypatch
 
     bad = enqueue_contradiction_candidate_batch(db, dry_run=True, after_node_id="not-an-id")
     assert bad == {"ok": False, "reason": "invalid_after_node_id", "after_node_id": "not-an-id"}
+
+
+def _confirmation_fixture(monkeypatch):
+    db = FakeDb()
+    source_id, yes_id, no_id = ObjectId(), ObjectId(), ObjectId()
+    db.nodes.rows.append(
+        {
+            "_id": source_id,
+            "node_key": "s",
+            "title": "Summary",
+            "labels": ["source_chunk"],
+            "text": "Slow vorton movement is what we call current.",
+            "embedding": {"model": "mock", "dimensions": 2},
+        }
+    )
+    # Targets carry no embedding so they are not swept as focus nodes themselves.
+    db.nodes.rows.append({"_id": yes_id, "node_key": "y", "title": "Denial", "text": "Current is not vorton motion."})
+    db.nodes.rows.append({"_id": no_id, "node_key": "n", "title": "Aside", "text": "Current is measured in amperes."})
+    monkeypatch.setattr(
+        "tirzah.retrieval.contradictions.contradiction_candidate_nodes",
+        lambda _db, node_id, **_kwargs: [
+            {"node_id": str(yes_id), "title": "Denial", "text_preview": "Current is not vorton motion."},
+            {"node_id": str(no_id), "title": "Aside", "text_preview": "Current is measured in amperes."},
+        ],
+    )
+    verdicts = {
+        yes_id: {"status": "confirmed", "label": "CONTRADICT", "reason": "CONTRADICT - opposite claims", "model": "m"},
+        no_id: {"status": "rejected", "label": "COMPATIBLE", "reason": "COMPATIBLE - different aspect", "model": "m"},
+    }
+    return db, source_id, yes_id, (lambda _source, target: verdicts[target["_id"]])
+
+
+def test_contradiction_enqueue_queues_only_model_confirmed_pairs(monkeypatch) -> None:
+    db, source_id, yes_id, confirmer = _confirmation_fixture(monkeypatch)
+
+    result = enqueue_contradiction_candidates(db, str(source_id), confirmer=confirmer)
+
+    assert result["confirmation"] == "llm"
+    assert (result["enqueued_count"], result["confirmed_count"], result["rejected_by_confirmation_count"]) == (1, 1, 1)
+    [row] = db.semantic_edge_candidates.rows
+    assert row["target_node_id"] == yes_id
+    assert row["confirmation"]["status"] == "confirmed"
+    assert row["confirmation"]["label"] == "CONTRADICT"
+
+
+def test_contradiction_enqueue_without_confirmer_is_marked_not_run(monkeypatch) -> None:
+    db, source_id, _yes_id, _confirmer = _confirmation_fixture(monkeypatch)
+
+    result = enqueue_contradiction_candidates(db, str(source_id))
+
+    assert result["confirmation"] == "off"
+    assert result["enqueued_count"] == 2
+    assert {row["confirmation"]["status"] for row in db.semantic_edge_candidates.rows} == {"not_run"}
+
+
+def test_contradiction_batch_preview_counts_only_confirmed_pairs(monkeypatch) -> None:
+    db, _source_id, yes_id, confirmer = _confirmation_fixture(monkeypatch)
+
+    result = enqueue_contradiction_candidate_batch(db, dry_run=True, candidates_per_node=5, confirmer=confirmer)
+
+    assert result["scope"]["confirmation"] == "llm"
+    assert result["would_enqueue_count"] == 1
+    assert result["rejected_by_confirmation_count"] == 1
+    focus = result["focus_results"][0]
+    assert [preview["target_node_id"] for preview in focus["candidate_previews"]] == [str(yes_id)]
+    assert focus["confirmation_rejections"][0]["label"] == "COMPATIBLE"
+    assert db.semantic_edge_candidates.rows == []

@@ -91,7 +91,7 @@ from tirzah.retrieval.queries import (
     list_documents,
     search_nodes,
 )
-from tirzah.retrieval.contradictions import contradiction_candidate_report
+from tirzah.retrieval.contradictions import contradiction_candidate_report, make_contradiction_confirmer
 from tirzah.retrieval.graph_explore import graph_neighborhood
 from tirzah.retrieval.trust import trust_temporal_diagnostic_for_node
 from tirzah.sessions.exchanges import recent_exchanges
@@ -236,6 +236,8 @@ class EnqueueSemanticEdgeCandidatesRequest(BaseModel):
     max_similarity: float = 0.97
     limit: int = 10
     candidate_scan_limit: int | None = None
+    # contradiction_signals only: local-model confirmation before queueing.
+    confirm: bool = True
 
 
 class EnqueueVectorSemanticBatchRequest(BaseModel):
@@ -266,6 +268,8 @@ class EnqueueContradictionBatchRequest(BaseModel):
     exclude_node_keys: list[str] = []
     dry_run: bool = True
     after_node_id: str | None = None
+    # Local-model confirmation before queueing (and in previews).
+    confirm: bool = True
 
 
 class CreateProcessRunRequest(BaseModel):
@@ -915,6 +919,7 @@ def create_app() -> FastAPI:
                 min_similarity=request.min_similarity,
                 max_similarity=request.max_similarity,
                 candidate_scan_limit=request.candidate_scan_limit,
+                confirmer=make_contradiction_confirmer(config.runtime, db=db) if request.confirm else None,
             )
         if source == "label_overlap":
             return enqueue_semantic_edge_candidates(
@@ -988,6 +993,7 @@ def create_app() -> FastAPI:
             exclude_node_keys=request.exclude_node_keys,
             dry_run=request.dry_run,
             after_node_id=request.after_node_id,
+            confirmer=make_contradiction_confirmer(config.runtime, db=db) if request.confirm else None,
         )
 
     @app.post("/api/review/semantic-edge-candidate")

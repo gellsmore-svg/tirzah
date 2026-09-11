@@ -338,3 +338,56 @@ def test_denial_below_old_floor_is_found_and_scan_drops_are_reported() -> None:
     assert diagnostics["exclusions"]["below_min_similarity"] == 1
     assert diagnostics["exclusions"]["no_disagreement_evidence"] == 1
     assert diagnostics["embedding_scan"]["scanned_count"] == 3
+
+
+def test_confirmer_maps_model_verdicts_and_passes_the_pair(monkeypatch) -> None:
+    import tirzah.adapters.answer as answer
+    from tirzah.config import RuntimeConfig
+    from tirzah.retrieval.contradictions import make_contradiction_confirmer
+
+    replies = iter(["CONTRADICT - A says X, B says not X.", "COMPATIBLE - same claim.", "hard to say"])
+    calls = []
+
+    def fake_generate(config, prompt, *, adapter_name=None, model=None):
+        calls.append({"adapter": adapter_name, "model": model, "prompt": prompt})
+        return {"answer": next(replies), "adapter": "fake", "model": model}
+
+    monkeypatch.setattr(answer, "generate_text", fake_generate)
+    confirm = make_contradiction_confirmer(RuntimeConfig(contradiction_confirmation_model="gemma4:e2b"))
+    a, b = {"title": "A", "text": "Current is vorton motion."}, {"title": "B", "text": "Current is not vorton motion."}
+
+    assert confirm(a, b)["status"] == "confirmed"
+    assert confirm(a, b)["status"] == "rejected"
+    assert confirm(a, b)["status"] == "unparsed"
+    assert calls[0]["model"] == "gemma4:e2b"
+    assert "Current is not vorton motion." in calls[0]["prompt"]
+    assert make_contradiction_confirmer(RuntimeConfig(contradiction_confirmation_enabled=False)) is None
+    assert make_contradiction_confirmer(None) is None
+
+
+def test_confirmer_stops_calling_after_the_model_is_unavailable(monkeypatch) -> None:
+    import tirzah.adapters.answer as answer
+    from tirzah.config import RuntimeConfig
+    from tirzah.retrieval.contradictions import make_contradiction_confirmer
+
+    calls = []
+
+    def refused(*_args, **_kwargs):
+        calls.append(1)
+        raise ConnectionError("connection refused")
+
+    monkeypatch.setattr(answer, "generate_text", refused)
+    confirm = make_contradiction_confirmer(RuntimeConfig())
+
+    first, second = confirm({"text": "x"}, {"text": "y"}), confirm({"text": "x"}, {"text": "y"})
+    assert first["status"] == second["status"] == "unavailable"
+    assert second["call_skipped"] is True
+    assert len(calls) == 1
+
+
+def test_confirmer_fails_closed_under_the_mock_answer_adapter() -> None:
+    from tirzah.config import RuntimeConfig
+    from tirzah.retrieval.contradictions import make_contradiction_confirmer
+
+    confirm = make_contradiction_confirmer(RuntimeConfig(answer_adapter="mock"))
+    assert confirm({"text": "X is Y."}, {"text": "X is not Y."})["status"] == "unparsed"

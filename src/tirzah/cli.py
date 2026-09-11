@@ -88,7 +88,7 @@ from tirzah.retrieval.queries import (
     embedding_candidate_report,
     semantic_candidate_nodes,
 )
-from tirzah.retrieval.contradictions import contradiction_candidate_report
+from tirzah.retrieval.contradictions import contradiction_candidate_report, make_contradiction_confirmer
 from tirzah.retrieval.graph_explore import (
     graph_neighborhood,
     render_graph_explore_mermaid,
@@ -684,6 +684,11 @@ def add_enqueue_contradiction_candidate_arguments(command: argparse.ArgumentPars
     command.add_argument("--max-similarity", type=float, default=0.97)
     command.add_argument("--limit", type=int, default=10)
     command.add_argument("--candidate-scan-limit", type=int, default=None)
+    command.add_argument(
+        "--skip-confirmation",
+        action="store_true",
+        help="Queue rule-admitted pairs without local-model confirmation (testing only).",
+    )
 
 
 def add_enqueue_contradiction_batch_arguments(command: argparse.ArgumentParser) -> None:
@@ -701,6 +706,11 @@ def add_enqueue_contradiction_batch_arguments(command: argparse.ArgumentParser) 
     # Preview by default, like POST /api/review/enqueue-contradiction-batch;
     # --apply writes pending review rows. --dry-run is accepted for old scripts.
     command.add_argument("--apply", action="store_true")
+    command.add_argument(
+        "--skip-confirmation",
+        action="store_true",
+        help="Queue rule-admitted pairs without local-model confirmation (testing only).",
+    )
     command.add_argument("--dry-run", action="store_true")
     command.add_argument("--format", choices=["json", "text"], default="json")
 
@@ -2446,6 +2456,9 @@ def main() -> None:
                     max_similarity=args.max_similarity,
                     limit=args.limit,
                     candidate_scan_limit=args.candidate_scan_limit,
+                    confirmer=None
+                    if args.skip_confirmation
+                    else make_contradiction_confirmer(getattr(config, "runtime", None), db=db),
                 ),
                 indent=2,
             )
@@ -2468,6 +2481,9 @@ def main() -> None:
             exclude_node_keys=args.exclude_node_key,
             dry_run=not args.apply,
             after_node_id=args.after_node_id,
+            confirmer=None
+            if args.skip_confirmation
+            else make_contradiction_confirmer(getattr(config, "runtime", None), db=db),
         )
         if args.format == "text":
             print(render_contradiction_batch_text(result))

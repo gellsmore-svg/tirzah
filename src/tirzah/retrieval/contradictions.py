@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Callable
 
 from pymongo.database import Database
 
@@ -71,6 +72,126 @@ CLAIM_STOPWORDS = frozenset(
 _CLAIM_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 # Ingestion format labels say how a file was parsed, not what it is about.
 FORMAT_LABEL_VALUES = frozenset(label for labels in FORMAT_LABELS.values() for label in labels)
+
+
+# Second stage: a local model confirms each rule-admitted pair before it is
+# queued. The "NOT contradictions" list names the false positives seen on a
+# live corpus (2026-09-11); validate any change against labelled pairs.
+CONFIRMATION_PROMPT = """You are checking a research-notes corpus for contradictions.
+
+Passage A:
+{a}
+
+Passage B:
+{b}
+
+Do these passages make claims that contradict each other, meaning both cannot be true about the same subject?
+These are NOT contradictions:
+- a rule or instruction, and a note that some material does not follow it yet;
+- two rules or statements that agree, even when worded differently or one is more specific;
+- status snapshots such as scores, version numbers or file paths recorded at different times;
+- passages about different aspects of the same topic.
+Two claims about how something is or works that cannot both be true ARE a contradiction, even if one is older.
+Answer on the first line with exactly one word:
+CONTRADICT - they assert incompatible things about the same subject
+COMPATIBLE - they agree, restate each other, or cover different aspects without conflict
+UNRELATED - they are not about the same subject
+Then give a one-sentence reason."""
+CONFIRMATION_LABEL_PATTERN = re.compile(r"\b(CONTRADICT|COMPATIBLE|UNRELATED)\b")
+CONFIRMATION_TEXT_CHARS = 1000
+CONFIRMATION_STEP_NAME = "contradiction_confirmation"
+
+ContradictionConfirmer = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
+
+
+def confirmation_prompt(source: dict[str, Any], target: dict[str, Any]) -> str:
+    def passage(node: dict[str, Any]) -> str:
+        title = str(node.get("title") or "").strip()
+        text = str(node.get("text") or node.get("text_preview") or "").strip()
+        return f"{title}\n{text[:CONFIRMATION_TEXT_CHARS]}".strip()
+
+    return CONFIRMATION_PROMPT.format(a=passage(source), b=passage(target))
+
+
+def parse_confirmation_label(text: Any) -> str:
+    match = CONFIRMATION_LABEL_PATTERN.search(str(text or "").upper())
+    return match.group(1) if match else "UNPARSED"
+
+
+def make_contradiction_confirmer(
+    runtime_config: Any,
+    *,
+    db: Any = None,
+    session_id: str = "consolidation",
+) -> ContradictionConfirmer | None:
+    """Build the local-model confirmation stage, or None when disabled.
+
+    The returned callable takes (source node, target node) and returns a
+    verdict whose ``status`` is ``confirmed``, ``rejected`` (the model judged
+    the pair compatible or unrelated), ``unparsed`` or ``unavailable``. Only
+    ``confirmed`` pairs may be queued. After the first ``unavailable`` result
+    the confirmer stops calling the model, so a dead endpoint cannot stall a
+    batch. Calls are recorded in galeed ``llm_calls`` when ``db`` is given.
+    """
+    if runtime_config is None or not getattr(runtime_config, "contradiction_confirmation_enabled", True):
+        return None
+    adapter_name = getattr(runtime_config, "contradiction_confirmation_adapter", None) or None
+    model = getattr(runtime_config, "contradiction_confirmation_model", None) or None
+    trace_id = f"contradiction-confirmation-{uuid.uuid4().hex[:12]}"
+    state: dict[str, str | None] = {"unavailable": None}
+
+    def record(prompt: str, result: dict[str, Any], output: str | None, error: str | None) -> None:
+        if db is None:
+            return
+        try:
+            from galeed import record_llm_call
+
+            usage = result.get("usage")
+            duration = result.get("duration_ms")
+            record_llm_call(
+                db,
+                trace_id=trace_id,
+                session_id=session_id,
+                source="tirzah",
+                step_name=CONFIRMATION_STEP_NAME,
+                model=result.get("model") or model,
+                prompt=prompt,
+                output=output,
+                error=error,
+                usage=usage if isinstance(usage, dict) else None,
+                duration_ms=int(duration) if duration is not None else None,
+                metadata={"role": CONFIRMATION_STEP_NAME, "adapter": result.get("adapter") or adapter_name},
+                emit_event=False,
+            )
+        except Exception:
+            pass
+
+    def confirm(source: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:
+        if state["unavailable"]:
+            return {"status": "unavailable", "error": state["unavailable"], "call_skipped": True}
+        from tirzah.adapters.answer import generate_text
+
+        prompt = confirmation_prompt(source, target)
+        try:
+            result = generate_text(runtime_config, prompt, adapter_name=adapter_name, model=model)
+        except Exception as error:
+            state["unavailable"] = str(error)
+            record(prompt, {}, None, str(error))
+            return {"status": "unavailable", "error": str(error)}
+        answer = str(result.get("answer") or "")
+        label = parse_confirmation_label(answer)
+        record(prompt, result, answer, None)
+        return {
+            "status": {"CONTRADICT": "confirmed", "UNPARSED": "unparsed"}.get(label, "rejected"),
+            "label": label,
+            "reason": answer.strip()[:300],
+            "adapter": result.get("adapter") or adapter_name,
+            "model": result.get("model") or model,
+            "trace_id": trace_id,
+        }
+
+    confirm.trace_id = trace_id  # type: ignore[attr-defined]
+    return confirm
 
 
 def contradiction_candidate_nodes(

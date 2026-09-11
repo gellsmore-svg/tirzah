@@ -2337,6 +2337,7 @@ def test_cli_enqueue_contradiction_candidates_command(monkeypatch, capsys) -> No
         "max_similarity": 0.96,
         "limit": 3,
         "candidate_scan_limit": 400,
+        "confirmer": None,  # stub config has no runtime
     }
 
 
@@ -2397,6 +2398,7 @@ def test_cli_enqueue_contradiction_batch_command(monkeypatch, capsys) -> None:
         "exclude_node_keys": ["section-1"],
         "dry_run": True,
         "after_node_id": None,
+        "confirmer": None,  # stub config has no runtime
     }
 
 

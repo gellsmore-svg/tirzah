@@ -2291,6 +2291,7 @@ def test_enqueue_contradiction_candidates_endpoint(monkeypatch) -> None:
         "tirzah.web.app.enqueue_contradiction_candidates",
         lambda _db, **kwargs: {"ok": True, "source": "contradiction", **kwargs},
     )
+    monkeypatch.setattr("tirzah.web.app.make_contradiction_confirmer", lambda _runtime, db=None: "llm-confirmer")
 
     response = client.post(
         "/api/review/enqueue-semantic-edge-candidates",
@@ -2317,6 +2318,7 @@ def test_enqueue_contradiction_candidates_endpoint(monkeypatch) -> None:
         "min_similarity": 0.84,
         "max_similarity": 0.96,
         "candidate_scan_limit": 400,
+        "confirmer": "llm-confirmer",
     }
 
 
@@ -2357,6 +2359,7 @@ def test_enqueue_contradiction_batch_endpoint(monkeypatch) -> None:
         "tirzah.web.app.enqueue_contradiction_candidate_batch",
         lambda _db, **kwargs: {"ok": True, **kwargs},
     )
+    monkeypatch.setattr("tirzah.web.app.make_contradiction_confirmer", lambda _runtime, db=None: "llm-confirmer")
 
     response = client.post(
         "/api/review/enqueue-contradiction-batch",
@@ -2390,6 +2393,7 @@ def test_enqueue_contradiction_batch_endpoint(monkeypatch) -> None:
         "exclude_node_keys": ["section-1"],
         "dry_run": True,
         "after_node_id": None,
+        "confirmer": "llm-confirmer",
     }
 
 
