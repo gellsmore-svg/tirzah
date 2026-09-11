@@ -216,7 +216,8 @@ class ModelBudgetProfile(_StrictModel):
     prompt_token_budget: int | None = Field(default=None, ge=64)
     reserved_response_tokens: int | None = Field(default=None, ge=16)
     context_char_budget: int | None = Field(default=None, ge=256)
-    tokenizer: str | None = None
+    # Blank would silently inherit the global tokenizer; omit the key instead.
+    tokenizer: str | None = Field(default=None, min_length=1)
     tokenizer_encoding: str | None = None
     chars_per_token: float | None = Field(default=None, gt=0)
 

@@ -98,7 +98,7 @@ from tirzah.sessions.interaction import (
     answer_query,
     backfill_chunks,
     backfill_turn_embeddings,
-    build_query_embedding,
+    query_embedding_with_diagnostic,
 )
 from tirzah.sessions.run import run_traced_interaction
 from galeed import (
@@ -460,6 +460,10 @@ def _prompt_budget_snapshot(config) -> dict[str, Any]:
         adapter=config.runtime.answer_adapter,
     )
     return {
+        # The configured default model's plan. A request that selects another
+        # model resolves that model's profile; its trace carries the real plan.
+        "scope": "default_model",
+        "available_profiles": sorted(config.retrieval.model_profiles or {}),
         "profile_key": plan.profile_key,
         "model": plan.model,
         "adapter": plan.adapter,
@@ -1001,7 +1005,10 @@ def create_app() -> FastAPI:
         trust_ranking: bool = False,
         trust_profile: str | None = None,
     ) -> dict[str, Any]:
-        return {
+        query_embedding, embedding_diagnostic = query_embedding_with_diagnostic(
+            config.runtime, query or None
+        )
+        payload: dict[str, Any] = {
             "ok": True,
             "nodes": search_nodes(
                 db,
@@ -1010,7 +1017,7 @@ def create_app() -> FastAPI:
                 origin_after=parse_iso_date(origin_after),
                 origin_before=parse_iso_date(origin_before),
                 limit=limit,
-                query_embedding=build_query_embedding(config.runtime, query or None),
+                query_embedding=query_embedding,
                 vector_search_index=config.runtime.vector_search_index or None,
                 vector_scan_limit=config.runtime.hybrid_vector_scan_limit,
                 trust_ranking_enabled=trust_ranking or config.runtime.trust_ranking_enabled,
@@ -1020,6 +1027,9 @@ def create_app() -> FastAPI:
                 trust_ranking_hybrid_weight=config.runtime.trust_ranking_hybrid_weight,
             ),
         }
+        if embedding_diagnostic:
+            payload["diagnostics"] = {"query_embedding": embedding_diagnostic}
+        return payload
 
     @app.post("/api/documents/{document_id}/origin-date")
     def set_document_origin_date(document_id: str, request: SetOriginDateRequest) -> dict[str, Any]:

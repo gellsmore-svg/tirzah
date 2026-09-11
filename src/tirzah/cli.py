@@ -106,7 +106,7 @@ from tirzah.sessions.endorsements import (
     list_generated_output_nodes,
     update_node_endorsement,
 )
-from tirzah.sessions.interaction import answer_query, build_query_embedding
+from tirzah.sessions.interaction import answer_query, query_embedding_with_diagnostic
 from tirzah.sessions.run import run_traced_interaction
 from tirzah.sessions.output_ingestion import (
     list_output_ingestion_jobs,
@@ -2163,34 +2163,35 @@ def main() -> None:
 
     if args.command == "search-nodes":
         ensure_indexes(db)
-        print(
-            json.dumps(
-                {
-                    "ok": True,
-                    "nodes": search_nodes(
-                        db,
-                        query=args.query,
-                        label=args.label,
-                        endorsement_label=args.endorsement,
-                        document_id=args.document_id,
-                        created_after=parse_iso_datetime(args.created_after),
-                        created_before=parse_iso_datetime(args.created_before),
-                        origin_after=parse_iso_date(args.origin_after),
-                        origin_before=parse_iso_date(args.origin_before),
-                        limit=args.limit,
-                        query_embedding=build_query_embedding(config.runtime, args.query),
-                        vector_search_index=config.runtime.vector_search_index or None,
-                        vector_scan_limit=config.runtime.hybrid_vector_scan_limit,
-                        trust_ranking_enabled=args.trust_ranking or config.runtime.trust_ranking_enabled,
-                        trust_weighting_profile=args.trust_profile or config.runtime.trust_weighting_profile,
-                        trust_ranking_weight=config.runtime.trust_ranking_weight,
-                        trust_ranking_max_boost=config.runtime.trust_ranking_max_boost,
-                        trust_ranking_hybrid_weight=config.runtime.trust_ranking_hybrid_weight,
-                    ),
-                },
-                indent=2,
-            )
+        query_embedding, embedding_diagnostic = query_embedding_with_diagnostic(
+            config.runtime, args.query
         )
+        payload = {
+            "ok": True,
+            "nodes": search_nodes(
+                db,
+                query=args.query,
+                label=args.label,
+                endorsement_label=args.endorsement,
+                document_id=args.document_id,
+                created_after=parse_iso_datetime(args.created_after),
+                created_before=parse_iso_datetime(args.created_before),
+                origin_after=parse_iso_date(args.origin_after),
+                origin_before=parse_iso_date(args.origin_before),
+                limit=args.limit,
+                query_embedding=query_embedding,
+                vector_search_index=config.runtime.vector_search_index or None,
+                vector_scan_limit=config.runtime.hybrid_vector_scan_limit,
+                trust_ranking_enabled=args.trust_ranking or config.runtime.trust_ranking_enabled,
+                trust_weighting_profile=args.trust_profile or config.runtime.trust_weighting_profile,
+                trust_ranking_weight=config.runtime.trust_ranking_weight,
+                trust_ranking_max_boost=config.runtime.trust_ranking_max_boost,
+                trust_ranking_hybrid_weight=config.runtime.trust_ranking_hybrid_weight,
+            ),
+        }
+        if embedding_diagnostic:
+            payload["diagnostics"] = {"query_embedding": embedding_diagnostic}
+        print(json.dumps(payload, indent=2))
         return
 
     if args.command == "node-context":

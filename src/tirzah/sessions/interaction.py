@@ -10,7 +10,7 @@ from bson.errors import InvalidId
 from pymongo.database import Database
 
 from tirzah.adapters.answer import answer_adapter
-from tirzah.adapters.embedding import embedding_adapter
+from tirzah.adapters.embedding import EmbeddingAdapterPolicyError, embedding_adapter
 from tirzah.config import AppConfig
 from tirzah.db.governance import create_process_run, list_agent_identities, update_process_run
 from tirzah.db.repositories import document_tree
@@ -130,8 +130,10 @@ LOW_INTENT_QUERIES = {
 ANSWER_PROCESS_ID = "answer_query"
 
 
-def _token_budget_pair(config: AppConfig) -> dict[str, int]:
-    args = envelope_budget_args(config)
+def _token_budget_pair(config: AppConfig, runtime_config: Any = None) -> dict[str, int]:
+    """Token budget for one request; ``runtime_config`` carries the per-request
+    model/adapter selection so its model profile, not the default's, applies."""
+    args = envelope_budget_args(config, runtime=runtime_config)
     return {
         "token_budget": int(args.get("token_budget") or config.retrieval.prompt_token_budget),
         "reserved_response_tokens": int(
@@ -381,7 +383,7 @@ def answer_query_agentic(
         prompt = build_agentic_answer_envelope(
             query=query,
             tool_results=tool_results,
-            **_token_budget_pair(config),
+            **_token_budget_pair(config, runtime_config),
             proposed_controller_decision=final_controller_decision_from_trace(process_trace),
             context_proposal=final_context_proposal_from_trace(process_trace),
         )
@@ -578,7 +580,10 @@ def prepare_direct_answer_prompt(
     query: str,
     focus_node_id: str | None,
     session_id: str,
+    runtime_config: Any = None,
 ) -> dict[str, Any]:
+    # Per-request runtime (model/adapter overrides); budgets resolve against it.
+    runtime = runtime_config if runtime_config is not None else config.runtime
     selected_node_id = focus_node_id
     selected_node_source = "provided" if focus_node_id else None
     active_documents: list[dict[str, Any]] = []
@@ -612,13 +617,13 @@ def prepare_direct_answer_prompt(
                 query=query,
                 resolver=make_resolver(config.runtime),
                 semantic_strict=config.runtime.mahalath_strict,
-                **envelope_budget_args(config),
+                **envelope_budget_args(config, runtime=runtime),
             )
         else:
             retrieval_status = "missing_context"
             prompt = build_prompt_envelope_without_context(
                 query=query,
-                **_token_budget_pair(config),
+                **_token_budget_pair(config, runtime),
             )
             prompt["context_metadata"]["retrieval_status"] = retrieval_status
     else:
@@ -629,7 +634,7 @@ def prepare_direct_answer_prompt(
             prompt = build_active_document_source_fallback_envelope(
                 active_documents=active_documents,
                 query=query,
-                **_token_budget_pair(config),
+                **_token_budget_pair(config, runtime),
             )
         if prompt:
             retrieval_status = "active_document_source_fallback"
@@ -637,7 +642,7 @@ def prepare_direct_answer_prompt(
             retrieval_status = "no_focus_node"
             prompt = build_prompt_envelope_without_context(
                 query=query,
-                **_token_budget_pair(config),
+                **_token_budget_pair(config, runtime),
             )
         prompt["context_metadata"]["retrieval_decision"] = retrieval_decision
     controller_decision = direct_context_controller_decision(
@@ -2438,17 +2443,38 @@ def build_query_embedding(runtime_config: Any, text: str | None) -> dict[str, An
     """Embed the query text for hybrid search, or return None to fall back to
     lexical-only ranking. Returns None when hybrid search is disabled, the
     embedding adapter is the deterministic mock (its query-vs-node similarity is
-    not meaningful), or embedding fails for any reason."""
+    not meaningful), or embedding fails for any reason. Callers that report to an
+    operator should use :func:`query_embedding_with_diagnostic` instead."""
+    return query_embedding_with_diagnostic(runtime_config, text)[0]
+
+
+def query_embedding_with_diagnostic(
+    runtime_config: Any, text: str | None
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Like :func:`build_query_embedding`, plus a diagnostic explaining a
+    degrade to lexical-only search. A policy refusal (HTTP-backed adapter) is
+    reported distinctly from a transient embedding failure."""
     if not text or runtime_config is None:
-        return None
+        return None, None
     if not getattr(runtime_config, "hybrid_search_enabled", False):
-        return None
-    if getattr(runtime_config, "embedding_adapter", "mock") == "mock":
-        return None
+        return None, None
+    adapter_name = getattr(runtime_config, "embedding_adapter", "mock")
+    if adapter_name == "mock":
+        return None, None
     try:
-        return embedding_adapter(runtime_config).embed(text)
-    except Exception:
-        return None
+        return embedding_adapter(runtime_config).embed(text), None
+    except EmbeddingAdapterPolicyError as error:
+        reason = "embedding_adapter_blocked"
+        message = str(error)
+    except Exception as error:
+        reason = "embedding_failed"
+        message = str(error)
+    return None, {
+        "reason": reason,
+        "adapter": adapter_name,
+        "message": message,
+        "fallback": "lexical_only",
+    }
 
 
 def execute_search_nodes_tool(

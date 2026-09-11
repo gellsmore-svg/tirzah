@@ -1753,7 +1753,7 @@ def test_embedding_smoke_payload_reports_disallowed_http_adapter() -> None:
     assert output["ok"] is False
     assert output["adapter"] == "ollama_http"
     assert output["model"] == "nomic-embed-text:latest"
-    assert output["error_type"] == "ValueError"
+    assert output["error_type"] == "EmbeddingAdapterPolicyError"
     assert "HTTP-backed" in output["error"]
 
 

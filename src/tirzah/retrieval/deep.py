@@ -19,6 +19,7 @@ from typing import Any
 
 from tirzah.adapters.answer import answer_adapter
 from tirzah.adapters.embedding import embedding_adapter
+from tirzah.retrieval.budget import request_budget_plan
 from tirzah.retrieval.queries import (
     expand_graph_paths,
     node_context,
@@ -665,17 +666,106 @@ def build_synthesis_prompt(
             + "Answer the question. If there is no relevant information available, say so plainly.\n\n"
             f"Question: {query}\n"
         )
-    blocks = []
-    for chunk in useful_chunks:
-        text = chunk.get("text") or chunk.get("text_preview") or ""
-        title = chunk.get("title") or ""
-        blocks.append(f"[{node_identity(chunk)}] {title}\n{text}".strip())
+    return _context_synthesis_prompt(
+        query, [_synthesis_block(chunk) for chunk in useful_chunks], history_block
+    )
+
+
+def _synthesis_block(chunk: dict[str, Any]) -> str:
+    text = chunk.get("text") or chunk.get("text_preview") or ""
+    title = chunk.get("title") or ""
+    return f"[{node_identity(chunk)}] {title}\n{text}".strip()
+
+
+def _context_synthesis_prompt(query: str, blocks: list[str], history_block: str = "") -> str:
+    prefix = (history_block.rstrip() + "\n\n") if history_block else ""
     return (
         prefix
         + "Answer the question using ONLY the context below. Cite the [node_id] sources you "
         "use. If the context is insufficient, say so plainly.\n\n"
         f"Context:\n{chr(10).join(blocks)}\n\nQuestion: {query}\n"
     )
+
+
+def pack_synthesis_chunks(
+    query: str,
+    useful_chunks: list[dict[str, Any]],
+    plan: Any,
+    history_block: str = "",
+) -> dict[str, Any]:
+    """Bound the synthesis context to the request's budget plan.
+
+    Keeps chunks in rank order while the rendered context fits
+    ``plan.context_char_budget`` and the whole prompt fits the prompt token
+    budget less the reserved response. The first chunk is truncated rather than
+    dropped so evidence never vanishes entirely; every skipped chunk is listed
+    so the trace shows what was left out. ``plan=None`` keeps everything.
+    """
+    chunks = list(useful_chunks)
+    if plan is None:
+        return {"kept": chunks, "skipped": [], "budget": {}}
+    available_tokens = max(0, plan.prompt_token_budget - plan.reserved_response_tokens)
+    char_budget = plan.context_char_budget
+    overhead_tokens = plan.count(_context_synthesis_prompt(query, [], history_block))
+    kept: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    truncated = 0
+    used_chars = 0
+    used_tokens = overhead_tokens
+    for chunk in chunks:
+        block = _synthesis_block(chunk)
+        block_tokens = plan.count(block + "\n")
+        fits = used_chars + len(block) <= char_budget and used_tokens + block_tokens <= available_tokens
+        if not fits and not kept:
+            header_chars = len(_synthesis_block({**chunk, "text": "", "text_preview": ""})) + 1
+            token_room_chars = int(max(0, available_tokens - overhead_tokens) * plan.chars_per_token)
+            room = min(char_budget, token_room_chars) - header_chars
+            if room > 0:
+                text = str(chunk.get("text") or chunk.get("text_preview") or "")
+                chunk = {**chunk, "text": text[:room], "truncated_from_chars": len(text)}
+                block = _synthesis_block(chunk)
+                block_tokens = plan.count(block + "\n")
+                truncated += 1
+                fits = True
+        if not fits:
+            skipped.append(
+                {
+                    "node_id": node_identity(chunk),
+                    "title": chunk.get("title"),
+                    "chars": len(block),
+                    "reason": "prompt_budget",
+                    "included_as": "omitted",
+                }
+            )
+            continue
+        kept.append(chunk)
+        used_chars += len(block)
+        used_tokens += block_tokens
+    prompt_tokens = plan.count(build_synthesis_prompt(query, kept, history_block))
+    return {
+        "kept": kept,
+        "skipped": skipped,
+        "budget": {
+            "token_budget": plan.prompt_token_budget,
+            "reserved_response_tokens": plan.reserved_response_tokens,
+            "estimated_overhead_tokens": overhead_tokens,
+            "available_context_tokens": max(0, available_tokens - overhead_tokens),
+            "estimated_prompt_tokens": prompt_tokens,
+            "estimated_total_with_reserved_response_tokens": prompt_tokens
+            + plan.reserved_response_tokens,
+            "tokenizer": plan.tokenizer,
+            "tokenizer_encoding": plan.tokenizer_encoding,
+            "chars_per_token": plan.chars_per_token,
+            "profile_key": plan.profile_key,
+            "model": plan.model,
+            "adapter": plan.adapter,
+            "context_char_budget": char_budget,
+            "used_chars": used_chars,
+            "kept_count": len(kept),
+            "skipped_count": len(skipped),
+            "truncated_count": truncated,
+        },
+    }
 
 
 def synthesize_answer(
@@ -754,12 +844,21 @@ def run_deep_answer(
         identity=identity,
         embedder=embedder,
     )
+    packed = pack_synthesis_chunks(
+        query,
+        result["useful_chunks"],
+        request_budget_plan(config, runtime=runtime_config),
+        history_block,
+    )
     synthesis = synthesize_answer_result(
-        query, result["useful_chunks"], adapter, history_block=history_block
+        query, packed["kept"], adapter, history_block=history_block
     )
     return {
         "answer": str(synthesis.get("answer") or ""),
         "useful_chunks": result["useful_chunks"],
+        "synthesis_chunks": packed["kept"],
+        "budget": packed["budget"],
+        "budget_skipped": packed["skipped"],
         "rounds": result["rounds"],
         "trace": result["trace"],
         "sufficiency": result.get("sufficiency"),

@@ -13,33 +13,37 @@ def count_tokens(
     encoding: str | None = None,
     chars_per_token: float = 4.0,
 ) -> dict[str, Any]:
+    """Count tokens. ``tokenizer`` is the effective tokenizer; ``tokenizer_fallback``
+    is True only when the requested tokenizer was unavailable and approx was used."""
+    requested = tokenizer
     if not text:
         return {
             "tokens": 0,
             "tokenizer": tokenizer,
+            "tokenizer_requested": requested,
             "tokenizer_encoding": encoding,
             "tokenizer_fallback": False,
         }
+    fallback = False
     if tokenizer == "tiktoken":
         counted = _tiktoken_count(text, encoding or "cl100k_base")
         if counted is not None:
             return {
                 "tokens": counted,
                 "tokenizer": "tiktoken",
+                "tokenizer_requested": requested,
                 "tokenizer_encoding": encoding or "cl100k_base",
                 "tokenizer_fallback": False,
             }
-        tokenizer = "approx"
         fallback = True
-    else:
-        fallback = False
     ratio = chars_per_token if chars_per_token > 0 else 4.0
     tokens = max(1, int((len(text) + ratio - 1) // ratio))
     return {
         "tokens": tokens,
         "tokenizer": "approx",
+        "tokenizer_requested": requested,
         "tokenizer_encoding": encoding,
-        "tokenizer_fallback": fallback or tokenizer == "approx",
+        "tokenizer_fallback": fallback,
     }
 
 
@@ -107,35 +111,55 @@ def resolve_budget_plan(
             profile_key = key
             break
     data = profile.model_dump() if profile is not None else {}
-    tokenizer = str(data.get("tokenizer") or retrieval.tokenizer)
-    encoding = data.get("tokenizer_encoding") or retrieval.tokenizer_encoding
-    chars_per_token = float(data.get("chars_per_token") or retrieval.chars_per_token)
+
+    def pick(field: str) -> Any:
+        # Only an unset (None) profile field inherits the global value; `or`
+        # would also swallow legitimate falsy values.
+        value = data.get(field)
+        return getattr(retrieval, field) if value is None else value
+
     return BudgetPlan(
-        prompt_token_budget=int(data.get("prompt_token_budget") or retrieval.prompt_token_budget),
-        reserved_response_tokens=int(
-            data.get("reserved_response_tokens") or retrieval.reserved_response_tokens
-        ),
-        context_char_budget=int(data.get("context_char_budget") or retrieval.context_char_budget),
-        tokenizer=tokenizer,
-        tokenizer_encoding=encoding,
-        chars_per_token=chars_per_token,
+        prompt_token_budget=int(pick("prompt_token_budget")),
+        reserved_response_tokens=int(pick("reserved_response_tokens")),
+        context_char_budget=int(pick("context_char_budget")),
+        tokenizer=str(pick("tokenizer")),
+        tokenizer_encoding=pick("tokenizer_encoding"),
+        chars_per_token=float(pick("chars_per_token")),
         profile_key=profile_key,
         model=model,
         adapter=adapter,
     )
 
 
-def envelope_budget_args(config: Any, *, model: str | None = None, adapter: str | None = None) -> dict[str, Any]:
+def request_budget_plan(
+    config: Any,
+    *,
+    runtime: Any = None,
+    model: str | None = None,
+    adapter: str | None = None,
+) -> BudgetPlan | None:
+    """Resolve the plan for one request. ``runtime`` is the per-request runtime
+    config (model/adapter overrides applied); it defaults to ``config.runtime``."""
     retrieval = getattr(config, "retrieval", None)
-    runtime = getattr(config, "runtime", None)
-    if retrieval is None:
-        return {}
-    plan = resolve_budget_plan(
+    if retrieval is None or not hasattr(retrieval, "prompt_token_budget"):
+        return None
+    runtime = runtime if runtime is not None else getattr(config, "runtime", None)
+    return resolve_budget_plan(
         retrieval,
         model=model or getattr(runtime, "ollama_model", None),
         adapter=adapter or getattr(runtime, "answer_adapter", None),
     )
-    return plan.as_envelope_kwargs()
+
+
+def envelope_budget_args(
+    config: Any,
+    *,
+    runtime: Any = None,
+    model: str | None = None,
+    adapter: str | None = None,
+) -> dict[str, Any]:
+    plan = request_budget_plan(config, runtime=runtime, model=model, adapter=adapter)
+    return plan.as_envelope_kwargs() if plan is not None else {}
 
 
 def recount_tokens(text: str, budget: dict[str, Any] | None) -> int:

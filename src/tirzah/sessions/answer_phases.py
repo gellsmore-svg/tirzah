@@ -121,7 +121,7 @@ def retrieve_for_answer(
         return _retrieve_deep(db, config, runtime_config, package)
     if runtime_config.retrieval_mode == "agentic":
         return _retrieve_agentic(db, config, runtime_config, package)
-    return _retrieve_direct(db, config, package)
+    return _retrieve_direct(db, config, runtime_config, package)
 
 
 def synthesize_from_retrieval(
@@ -174,8 +174,7 @@ def build_retrieval_package_from_context_bundle(
         prompt = ix.build_agentic_answer_envelope(
             query=query,
             tool_results=tool_results,
-            token_budget=config.retrieval.prompt_token_budget,
-            reserved_response_tokens=config.retrieval.reserved_response_tokens,
+            **ix._token_budget_pair(config, runtime_config),
             proposed_controller_decision=ix.final_controller_decision_from_trace(process_trace),
             context_proposal=ix.final_context_proposal_from_trace(process_trace),
         )
@@ -314,7 +313,12 @@ def _begin_answer_request(
     return runtime_config, process_trace, process_run_id
 
 
-def _retrieve_direct(db: Database, config: AppConfig, package: AnswerRetrievalPackage) -> dict[str, Any]:
+def _retrieve_direct(
+    db: Database,
+    config: AppConfig,
+    runtime_config: RuntimeConfig,
+    package: AnswerRetrievalPackage,
+) -> dict[str, Any]:
     try:
         preparation = ix.prepare_direct_answer_prompt(
             db,
@@ -322,6 +326,7 @@ def _retrieve_direct(db: Database, config: AppConfig, package: AnswerRetrievalPa
             query=package.query,
             focus_node_id=package.focus_node_id,
             session_id=package.session_id,
+            runtime_config=runtime_config,
         )
     except Exception as error:
         return _retrieval_failed(db, package, "retrieval_failed", "retrieval_context", error, config.runtime)
@@ -364,8 +369,7 @@ def _retrieve_agentic(
         prompt = ix.build_agentic_answer_envelope(
             query=package.query,
             tool_results=tool_results,
-            token_budget=config.retrieval.prompt_token_budget,
-            reserved_response_tokens=config.retrieval.reserved_response_tokens,
+            **ix._token_budget_pair(config, runtime_config),
             proposed_controller_decision=ix.final_controller_decision_from_trace(package.process_trace),
             context_proposal=ix.final_context_proposal_from_trace(package.process_trace),
         )
@@ -390,10 +394,12 @@ def _retrieve_deep(
     runtime_config: RuntimeConfig,
     package: AnswerRetrievalPackage,
 ) -> dict[str, Any]:
+    from tirzah.retrieval.budget import request_budget_plan
     from tirzah.retrieval.deep import (
         make_planner,
         make_scorer,
         make_triager,
+        pack_synthesis_chunks,
         run_deep_retrieval,
     )
 
@@ -415,21 +421,28 @@ def _retrieve_deep(
     except Exception as error:
         return _retrieval_failed(db, package, "deep_retrieval_failed", "deep_retrieval", error, runtime_config)
     useful = deep_result["useful_chunks"]
-    used_node_ids = [nid for nid in (node_identity(c) for c in useful) if nid]
-    package.useful_chunks = list(useful)
+    # Bound the synthesis context to the per-request model's budget; the
+    # history block is added (and re-packed) at synthesis time.
+    packed = pack_synthesis_chunks(
+        package.query, useful, request_budget_plan(config, runtime=runtime_config)
+    )
+    kept = packed["kept"]
+    used_node_ids = [nid for nid in (node_identity(c) for c in kept) if nid]
+    package.useful_chunks = list(kept)
     package.prompt = {
         "prompt_text": "",
-        "budget": {},
+        "budget": packed["budget"],
         "context_metadata": {
             "included": [{"node_id": nid} for nid in used_node_ids],
             "evidence_summary": {
                 "included_node_count": len(used_node_ids),
                 "source_documents": [],
             },
-            "skipped": [],
+            "skipped": packed["skipped"],
+            "skipped_count": len(packed["skipped"]),
         },
     }
-    package.retrieval_status = "deep_context" if useful else "deep_no_context"
+    package.retrieval_status = "deep_context" if kept else "deep_no_context"
     package.deep_trace = list(deep_result.get("trace") or [])
     package.selected_node_id = package.focus_node_id
     for entry in package.deep_trace:
@@ -452,6 +465,8 @@ def _retrieve_deep(
             "output": {
                 "ok": True,
                 "useful_count": len(useful),
+                "synthesis_kept_count": len(kept),
+                "synthesis_budget_skipped_count": len(packed["skipped"]),
                 "rounds": deep_result["rounds"],
                 "trace": deep_result["trace"],
             },
@@ -530,13 +545,31 @@ def _synthesize_deep_and_persist(
     package: AnswerRetrievalPackage,
 ) -> dict[str, Any]:
     from tirzah.adapters.answer import instrumentation_from_answer
-    from tirzah.retrieval.deep import build_synthesis_prompt, synthesize_answer_result
+    from tirzah.retrieval.budget import request_budget_plan
+    from tirzah.retrieval.deep import (
+        build_synthesis_prompt,
+        pack_synthesis_chunks,
+        synthesize_answer_result,
+    )
 
-    useful = list(package.useful_chunks or [])
-    used_node_ids = [nid for nid in (node_identity(c) for c in useful) if nid]
     history_block = ix.render_session_history_block(
         db, config, session_id=package.session_id, query=package.query
     )
+    # Re-pack with the history block in the prompt so the whole synthesis
+    # input, not just the context, stays inside the model's budget.
+    packed = pack_synthesis_chunks(
+        package.query,
+        list(package.useful_chunks or []),
+        request_budget_plan(config, runtime=runtime_config),
+        history_block,
+    )
+    useful = packed["kept"]
+    used_node_ids = [nid for nid in (node_identity(c) for c in useful) if nid]
+    if isinstance(package.prompt, dict) and packed["budget"]:
+        package.prompt["budget"] = packed["budget"]
+        metadata = package.prompt.setdefault("context_metadata", {})
+        metadata["skipped"] = list(metadata.get("skipped") or []) + packed["skipped"]
+        metadata["skipped_count"] = len(metadata["skipped"])
     adapter_step = {
         "step": "answer_adapter",
         "input": {
@@ -547,6 +580,7 @@ def _synthesize_deep_and_persist(
             # shows deep-mode In→Out like every other call.
             "prompt_text": build_synthesis_prompt(package.query, useful, history_block),
             "useful_count": len(useful),
+            "budget": packed["budget"],
             "timeout_seconds": runtime_config.ollama_timeout_seconds
             if runtime_config.answer_adapter.startswith("ollama")
             else None,
