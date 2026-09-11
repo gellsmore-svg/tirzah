@@ -41,6 +41,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   #58, #59).
 
 ### Added
+- **Contradiction confirmation:** a local model must confirm each rule-admitted
+  contradiction pair before it is queued for review, in CLI and web, for single
+  and batch runs, including dry-run previews. The lexical rule measured about
+  0.25% precise on a real corpus. The check is on by default
+  (`runtime.contradiction_confirmation_enabled`), with optional
+  `contradiction_confirmation_adapter` / `_model` overrides. It fails closed: if
+  the model is unavailable or unparseable, nothing is queued, and it stops
+  calling after the first failure. Queued rows carry the verdict and the
+  model's reason; previews list what the model rejected. Calls are recorded in
+  galeed `llm_calls`. `--skip-confirmation` / `confirm: false` bypasses it for
+  testing.
 - **Graph neighborhood explorer:** `graph-explore` renders a one- or two-hop
   neighborhood as text or Mermaid (`--format mermaid`), including relation
   types, endorsement, dates, and provenance. Optional `--endorsement` and

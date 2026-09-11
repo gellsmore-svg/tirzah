@@ -84,6 +84,6 @@ These capabilities shipped without requirement ids. Each is mapped here to the e
 | Targeted (diff) rebuild | REQ-ING-09, REQ-END-02, REQ-END-05, REQ-FAI-05; consolidated *Repository Refresh* | Implemented: content-first node matching, reviewed edges preserved, endorsement reset when content changes, non-destructive rollback. |
 | Per-model prompt budgets | REQ-CTX-01, REQ-CTX-03 | Implemented for direct, agentic and deep modes, resolved against the model selected for the request. |
 | Budget-skip summaries | REQ-CTX-01; PRD *LLM Transparency* | Implemented. Summary provenance is re-stamped when a rebuild regenerates the text. |
-| Contradiction candidates | REQ-CON-02; DQ-005 | Implemented as review candidates only. Admission requires disagreement evidence; see DQ-005. |
+| Contradiction candidates | REQ-CON-02; DQ-005 | Implemented as review candidates only. Admission requires disagreement evidence and local-model confirmation before queueing; see DQ-005. |
 | Multi-format ingestion (HTML, code, JSON, YAML, CSV) | REQ-ING-03; consolidated *Source Authority* | Implemented. Parser transformations are reported in the ingestion activity log (`source_analysis`). |
 | Graph exploration (CLI and web) | REQ-RET-01, REQ-RET-02, REQ-UI-01 to REQ-UI-06 | Implemented as an inspection view; node and branch caps are reported as exclusions. |

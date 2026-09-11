@@ -56,6 +56,14 @@ class RuntimeConfig(_StrictModel):
     planning_model: str | None = None
     planning_max_revisions: int = Field(default=3, ge=1, le=20)
     planning_max_steps: int = Field(default=12, ge=1, le=30)
+    # Local-model confirmation of contradiction candidates before they are
+    # queued for review. The lexical disagreement rule is only a pre-filter
+    # (about 0.25% precise on a real corpus, measured 2026-09-11). Fails
+    # closed: if the model is unavailable or unparseable, nothing is queued.
+    contradiction_confirmation_enabled: bool = True
+    # Empty = follow answer_adapter and that adapter's configured model.
+    contradiction_confirmation_adapter: str | None = None
+    contradiction_confirmation_model: str | None = None
     # Walk Cairn plan steps in depends_on order (SPEC §4.6) instead of only
     # wrapping a monolithic ask pipeline.
     plan_interpretive_execution_enabled: bool = False
