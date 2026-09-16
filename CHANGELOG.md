@@ -65,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     transcript sentence). A denial
     that matches what the other sentence contrasts the term with ("X is
     not B" beside "X is A, not B") is agreement and never pairs. Copies
-    collapse, no sentence fills more than two of a term's slots, and
+    collapse, no sentence fills more than six of a term's slots, and
     comparison includes pairs within one document.
   - The local model then answers a closed question per pair: do the two
     sentences give incompatible accounts of what the term is or names
@@ -78,6 +78,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     title matches, for documents that borrow a term for another subject (a
     biochemistry route map using "field" for its own labels). The report
     counts skipped passages per term.
+  - Pairs stating the same change collapse into one candidate carrying
+    `group_size` and `supporting` (the other passage pairs), so a
+    redefinition restated across the corpus is one review row, and the model
+    confirms it once. With restatements grouped, the per-sentence slot cap is
+    a backstop rather than the main defence, so it rises from 2 to 6: at 2 it
+    was keeping real changes out of the selection.
   - The confirmer and the second pass share one bounded model-call helper
     (a circuit breaker plus galeed `llm_calls` recording).
 - **Contradiction confirmation:** a local model must confirm each rule-admitted

@@ -198,8 +198,10 @@ def test_ranking_prefers_real_definitions_over_predications() -> None:
     assert {pairs[0]["a"]["body"], pairs[0]["b"]["body"]} == {
         "a state of substrate tension", "the capacity of a configuration to change"}
     assert "strong_definitions" not in pairs[0]["reasons"]  # only one side uses a strong verb
-    # "is not stored" vs "is stored" are passing predications, not definitions.
-    assert not any("capacitors" in p["a"]["sentence"] + p["b"]["sentence"] for p in pairs)
+    # "is not stored" vs "is stored" are passing predications: they may fill a
+    # leftover slot, but always below a pair of real definitions.
+    weak = [p for p in pairs if "capacitors" in p["a"]["sentence"] + p["b"]["sentence"]]
+    assert all(p["score"] < pairs[0]["score"] for p in weak)
 
 
 def test_definition_cap_keeps_the_most_definitional_sentences() -> None:
@@ -214,11 +216,34 @@ def test_definition_cap_keeps_the_most_definitional_sentences() -> None:
     assert {pair["a"]["body"], pair["b"]["body"]} == {"a stable torsional configuration", "a summary of substrate state"}
 
 
+def test_pairs_group_restatements_of_one_change() -> None:
+    rows = _defs(
+        "T2",
+        "T2 names manifest lived embodiment and conscious interface.",
+        "T2 names the secondary ordering conditions governing propagation.",
+        "T2 names manifest lived embodiment, perception and conscious interface.",
+        "T2 names the secondary ordering conditions governing coupling.",
+    )
+    [pair] = definition_pairs(rows)  # one change, however many passages state it
+    assert pair["group_size"] == 4
+    assert len(pair["supporting"]) == 3
+    assert all(s["a_node_id"] and s["b_node_id"] for s in pair["supporting"])
+    assert len(definition_pairs(rows, group_changes=False)) == 4  # diagnostics rank every pair
+    # Genuinely different changes keep their own rows.
+    others = _defs(
+        "charge",
+        "Charge is the directional bias of vorton slip.",
+        "Charge is an effective description of stable asymmetry.",
+        "Charge is a conserved scalar quantity of particles.",
+    )
+    assert len(definition_pairs(others)) == 3
+
+
 def test_no_definition_fills_a_terms_quota() -> None:
     bodies = ["stable torsional configurations", "a potential gradient in space", "an abstraction over forces",
               "the ordered ground of the substrate", "measurable tension around charges", "a ledger of momentum flow"]
     rows = _defs("field", *[f"Field names {body}." for body in bodies])
-    pairs = definition_pairs(rows, pairs_per_term=10)
+    pairs = definition_pairs(rows, pairs_per_term=10, max_pairs_per_definition=2)
     usage: dict[str, int] = {}
     for pair in pairs:
         for side in ("a", "b"):

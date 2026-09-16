@@ -79,6 +79,9 @@ CONTEXT_SENTENCES = 2
 CONTEXT_CHARS = 800
 # Definitions rarely run this long; run-on sentences are mostly transcribed speech.
 RUN_ON_WORDS = 60
+# Two pairs state the same change when both sides' claims match this closely.
+CHANGE_GROUP_MIN_OVERLAP = 0.6
+CHANGE_GROUP_MAX_SUPPORTING = 10
 
 _VERB_ALT = "|".join(
     re.escape(verb) if verb == "=" else rf"{re.escape(verb)}\b"
@@ -281,7 +284,9 @@ def definition_pairs(
     include_same_document: bool = True,
     min_score: float = 1.0,
     max_definitions_per_term: int = 400,
-    max_pairs_per_definition: int = 2,
+    # Grouping now keeps restatements out of the quota, so this is a backstop.
+    max_pairs_per_definition: int = 6,
+    group_changes: bool = True,
 ) -> list[dict[str, Any]]:
     """Rank pairs of conflicting definitions of the same term.
 
@@ -291,8 +296,13 @@ def definition_pairs(
     denies, then revision markers, then genuinely different definitions, each
     weighted by ``definition_strength``. No definition appears in more than
     ``max_pairs_per_definition`` selected pairs, so one sentence cannot fill a
-    term's quota. Each definition needs ``node_id`` and ``document_id``;
-    ``origin_date`` orders the pair older-first when both are known.
+    term's quota. Pairs that state the same change as an already-selected pair
+    (both sides' claims matching, in either order) do not take a slot of their
+    own: they raise its ``group_size`` and are listed in ``supporting``, so one
+    redefinition is one candidate however many passages restate it; set
+    ``group_changes`` False to rank every pair on its own, as diagnostics do.
+    Each definition needs ``node_id`` and ``document_id``; ``origin_date``
+    orders the pair older-first when both are known.
     """
     by_term: dict[str, dict[tuple[str, str, str], dict[str, Any]]] = defaultdict(dict)
     for definition in definitions:
@@ -363,22 +373,51 @@ def definition_pairs(
                 if a.get("origin_date") and b.get("origin_date") and b["origin_date"] < a["origin_date"]:
                     first, second = b, a
                 pairs.append({"term": term, "score": round(score, 3), "reasons": reasons,
-                              "body_overlap": round(overlap, 3), "a": first, "b": second})
+                              "body_overlap": round(overlap, 3), "a": first, "b": second, "_index": (i, j)})
         # Ties go to explicit denials; then spread picks across definitions.
         pairs.sort(key=lambda pair: (-pair["score"], "asserted_and_denied" not in pair["reasons"]))
         used: dict[str, int] = defaultdict(int)
-        selected = 0
+        groups: list[tuple[set[str], set[str], dict[str, Any]]] = []
         for pair in pairs:
-            if selected >= pairs_per_term:
-                break
+            i, j = pair.pop("_index")
+            group = _matching_group(groups, tokens[i], tokens[j]) if group_changes else None
+            if group is not None:
+                _add_supporting(group, pair)
+                continue
+            if len(groups) >= pairs_per_term:
+                continue
             keys = (_normalized(pair["a"]["sentence"]), _normalized(pair["b"]["sentence"]))
             if any(used[key] >= max_pairs_per_definition for key in keys):
                 continue
             for key in keys:
                 used[key] += 1
-            selected += 1
+            pair["group_size"], pair["supporting"] = 1, []
+            groups.append((tokens[i], tokens[j], pair))
             ranked.append(pair)
     return ranked
+
+
+def _matching_group(
+    groups: list[tuple[set[str], set[str], dict[str, Any]]], tokens_a: set[str], tokens_b: set[str]
+) -> dict[str, Any] | None:
+    """The selected pair, if any, that states the same change as this one."""
+    for left, right, pair in groups:
+        forward = min(_token_overlap(tokens_a, left), _token_overlap(tokens_b, right))
+        reverse = min(_token_overlap(tokens_a, right), _token_overlap(tokens_b, left))
+        if max(forward, reverse) >= CHANGE_GROUP_MIN_OVERLAP:
+            return pair
+    return None
+
+
+def _add_supporting(pair: dict[str, Any], duplicate: dict[str, Any]) -> None:
+    """Keep another passage pair that states the same change, for provenance."""
+    pair["group_size"] += 1
+    if len(pair["supporting"]) < CHANGE_GROUP_MAX_SUPPORTING:
+        pair["supporting"].append({
+            "score": duplicate["score"],
+            "a_node_id": duplicate["a"].get("node_id"), "b_node_id": duplicate["b"].get("node_id"),
+            "a_title": duplicate["a"].get("title"), "b_title": duplicate["b"].get("title"),
+        })
 
 
 # --------------------------------------------------------------------------- #
@@ -667,7 +706,8 @@ def definition_drift_report(
                 definitions.append(model_definition(by_key[key], node, verdict["sentence"]))
     candidates = []
     for pair in definition_pairs(definitions, pairs_per_term=pairs_per_term, include_same_document=include_same_document):
-        candidate = {key: pair[key] for key in ("term", "score", "reasons", "body_overlap")}
+        candidate = {key: pair[key] for key in
+                     ("term", "score", "reasons", "body_overlap", "group_size", "supporting")}
         candidate["a"], candidate["b"] = _slim(pair["a"]), _slim(pair["b"])
         if confirmer is not None:
             candidate["confirmation"] = confirmer(_passage(pair["a"]), _passage(pair["b"]))
@@ -705,9 +745,12 @@ def render_definition_drift_text(result: dict[str, Any]) -> str:
         )
     for number, candidate in enumerate(result.get("candidates") or [], start=1):
         verdict = (candidate.get("confirmation") or {}).get("status", "not_run")
+        group = candidate.get("group_size") or 1
+        restated = f" | restated by {group - 1} more pair(s)" if group > 1 else ""
         lines += [
             "",
-            f"{number}. {candidate['term']} | score {candidate['score']} | {', '.join(candidate['reasons'])} | model: {verdict}",
+            f"{number}. {candidate['term']} | score {candidate['score']} | {', '.join(candidate['reasons'])} "
+            f"| model: {verdict}{restated}",
             f"   A [{(candidate['a'].get('title') or '')[:60]}]: {(candidate['a'].get('sentence') or '')[:200]}",
             f"   B [{(candidate['b'].get('title') or '')[:60]}]: {(candidate['b'].get('sentence') or '')[:200]}",
         ]

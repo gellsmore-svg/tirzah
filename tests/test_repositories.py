@@ -2564,6 +2564,8 @@ def test_definition_drift_previews_then_queues_only_confirmed_pairs() -> None:
     assert row["candidate_source"] == "definition_drift"
     assert row["relation_type"] == "contradicts"
     assert row["definition_signals"]["term"] == "current"
+    assert row["definition_signals"]["group_size"] >= 1
+    assert isinstance(row["definition_signals"]["supporting"], list)
     assert row["confirmation"]["status"] == "confirmed"
 
     again = enqueue_definition_drift_candidates(db, ["current"], router=router, confirmer=confirmer, dry_run=False)
