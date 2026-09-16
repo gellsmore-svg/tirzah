@@ -73,7 +73,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     rejected real redefinitions as "different aspects". The command
     previews by default; `--apply` writes. Settings: `runtime.definition_terms`,
     `definition_second_pass_enabled`, `definition_second_pass_limit`,
-    `definition_frame_titles`.
+    `definition_frame_titles`, `definition_exclude_titles`.
+  - `definition_exclude_titles` skips passages whose section **or document**
+    title matches, for documents that borrow a term for another subject (a
+    biochemistry route map using "field" for its own labels). The report
+    counts skipped passages per term.
   - The confirmer and the second pass share one bounded model-call helper
     (a circuit breaker plus galeed `llm_calls` recording).
 - **Contradiction confirmation:** a local model must confirm each rule-admitted

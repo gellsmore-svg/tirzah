@@ -2571,6 +2571,26 @@ def test_definition_drift_previews_then_queues_only_confirmed_pairs() -> None:
     assert again["skipped_existing_count"] == applied["enqueued_count"]
 
 
+def test_definition_drift_skips_excluded_sections_and_documents() -> None:
+    from tirzah.db.repositories import enqueue_definition_drift_candidates
+
+    db = _drift_db()
+    db.nodes.rows.append({"_id": ObjectId(), "title": "Route Map 5 / paragraph 1", "labels": ["source_chunk"],
+                          "text": "Current = local carrier flux along the pathway.", "document_id": "d4"})
+    # This section title says nothing; the document it belongs to is the giveaway.
+    db.nodes.rows.append({"_id": ObjectId(), "title": "Respiration / paragraph 1", "labels": ["source_chunk"],
+                          "text": "Current = proton gradient discharge.", "document_id": "d5"})
+    db.documents.rows.append({"_id": "d5", "title": "AMS Oxygen Route Map v1"})
+
+    result = enqueue_definition_drift_candidates(db, ["current"], exclude_titles=["route map"])
+
+    assert result["stats"]["current"]["excluded_nodes"] == 2
+    paired = " ".join(c["a"]["sentence"] + c["b"]["sentence"] for c in result["candidates"])
+    assert "carrier flux" not in paired and "proton gradient" not in paired
+    # Without the setting, nothing is skipped.
+    assert enqueue_definition_drift_candidates(db, ["current"])["stats"]["current"]["excluded_nodes"] == 0
+
+
 def test_definition_drift_requires_terms() -> None:
     from tirzah.db.repositories import enqueue_definition_drift_candidates
 

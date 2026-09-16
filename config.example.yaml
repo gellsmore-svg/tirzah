@@ -52,6 +52,10 @@ runtime:
   # else's view, on top of built-in ones such as "Comparator", "Objection",
   # "Replaced assumption" and "Guardrail", e.g. ["general relativity", "\\bnewton\\b"].
   # definition_frame_titles: []
+  # Section- or document-title regexes whose passages borrow these words for
+  # another subject and so define nothing, e.g. ["route map"] to skip a
+  # biochemistry document that uses "field" for something of its own.
+  # definition_exclude_titles: []
   # HTTP-backed embedding adapters are not compliant for ingestion/retrieval memory operations.
   allow_http_ingestion_adapters: false
   embedding_model: nomic-embed-text:latest

@@ -2113,6 +2113,7 @@ def enqueue_definition_drift_candidates(
     created_by: str = "user",
     dry_run: bool = True,
     frame_titles: list[str] | None = None,
+    exclude_titles: list[str] | None = None,
 ) -> dict[str, Any]:
     """Queue ``contradicts`` candidates from definitions of a term that disagree
     (``candidate_source: definition_drift``). With ``confirmer`` only
@@ -2134,6 +2135,7 @@ def enqueue_definition_drift_candidates(
         second_pass_limit=second_pass_limit,
         confirmer=confirmer,
         frame_titles=frame_titles or (),
+        exclude_titles=exclude_titles or (),
     )
     now = datetime.now(timezone.utc)
     counts = {**empty_confirmation_counts(), "would_enqueue_count": 0, "enqueued_count": 0,

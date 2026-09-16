@@ -409,7 +409,8 @@ def _node_fields(node: dict[str, Any]) -> dict[str, Any]:
 
 
 def definition_index(
-    db: Any, terms: list[str], *, second_pass_limit: int = 20, frame_titles: Iterable[str] = ()
+    db: Any, terms: list[str], *, second_pass_limit: int = 20, frame_titles: Iterable[str] = (),
+    exclude_titles: Iterable[str] = ()
 ) -> dict[str, Any]:
     """Definitions of each term across active chunks and sections.
 
@@ -422,6 +423,8 @@ def definition_index(
 
     # Extra section titles (regexes) whose definitions report someone else's view.
     patterns = [re.compile(pattern, re.I) for pattern in frame_titles]
+    # Sections or documents about another subject that reuses the same words.
+    excluded = [re.compile(pattern, re.I) for pattern in exclude_titles]
     definitions: list[dict[str, Any]] = []
     second_pass: dict[str, list[dict[str, Any]]] = {}
     stats: dict[str, dict[str, int]] = {}
@@ -439,9 +442,13 @@ def definition_index(
             )
         )
         nodes.sort(key=lambda node: "source_section" in (node.get("labels") or []))
-        term_stats = {"nodes": len(nodes), "definitions": 0, "framed": 0, "qualified": 0}
+        term_stats = {"nodes": len(nodes), "definitions": 0, "framed": 0, "qualified": 0, "excluded_nodes": 0}
         unrouted: list[dict[str, Any]] = []
+        document_titles = _document_titles(db, nodes) if excluded else {}
         for node in nodes:
+            if excluded and _excluded_node(node, document_titles, excluded):
+                term_stats["excluded_nodes"] += 1
+                continue
             found = [d for d in extract_definitions(node.get("text") or "", [term], title=node.get("title"),
                                                     frame_titles=patterns)
                      if d["term_key"] == key]
@@ -455,6 +462,24 @@ def definition_index(
         second_pass[key] = unrouted[:second_pass_limit]
         stats[key] = {**term_stats, "second_pass_candidates": len(unrouted)}
     return {"definitions": definitions, "second_pass_candidates": second_pass, "stats": stats}
+
+
+def _document_titles(db: Any, nodes: list[dict[str, Any]]) -> dict[Any, str]:
+    """Titles of the documents these nodes belong to, for exclusion matching.
+
+    A term can be borrowed by a whole document (a biochemistry route map using
+    "field" for something of its own), where the section titles say nothing.
+    """
+    ids = {node.get("document_id") for node in nodes if node.get("document_id") is not None}
+    if not ids:
+        return {}
+    rows = db.documents.find({"_id": {"$in": list(ids)}}, {"title": 1})
+    return {row.get("_id"): str(row.get("title") or "") for row in rows}
+
+
+def _excluded_node(node: dict[str, Any], document_titles: dict[Any, str], patterns: list[re.Pattern[str]]) -> bool:
+    haystack = f"{node.get('title') or ''}\n{document_titles.get(node.get('document_id'), '')}"
+    return any(pattern.search(haystack) for pattern in patterns)
 
 
 def _sentence_in_text(quoted: str, text: str) -> str | None:
@@ -615,6 +640,7 @@ def definition_drift_report(
     second_pass_limit: int = 20,
     confirmer: Any = None,
     frame_titles: Iterable[str] = (),
+    exclude_titles: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Candidate contradictions from definitions of ``terms`` that disagree.
 
@@ -626,7 +652,7 @@ def definition_drift_report(
     """
     terms = [term for term in dict.fromkeys(t.strip() for t in terms) if term]
     index = definition_index(db, terms, second_pass_limit=second_pass_limit if router is not None else 0,
-                             frame_titles=frame_titles)
+                             frame_titles=frame_titles, exclude_titles=exclude_titles)
     definitions = list(index["definitions"])
     second_pass = {"enabled": router is not None, "considered": 0, "defines": 0, "not_definition": 0,
                    "unparsed": 0, "unavailable": 0}

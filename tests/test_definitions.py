@@ -292,7 +292,7 @@ def test_cli_definition_drift_wires_terms_and_defaults(monkeypatch, capsys) -> N
     assert output == {
         "ok": True, "terms": ["T1", "current"], "pairs_per_term": 5, "include_same_document": True,
         "second_pass_limit": 20, "router": None, "confirmer": None, "created_by": "user", "dry_run": True,
-        "frame_titles": [],
+        "frame_titles": [], "exclude_titles": [],
     }
 
 
