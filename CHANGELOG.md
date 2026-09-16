@@ -84,6 +84,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     confirms it once. With restatements grouped, the per-sentence slot cap is
     a backstop rather than the main defence, so it rises from 2 to 6: at 2 it
     was keeping real changes out of the selection.
+  - `definition_confirmation_samples` (default 1) asks the confirmer that
+    many times per pair and takes the majority, because a local model at
+    these sizes disagrees with itself between runs (measured: 14% of
+    identical pairs). It stops early once a label cannot be beaten, records
+    the `votes`, and fails closed when there is no majority.
   - The confirmer and the second pass share one bounded model-call helper
     (a circuit breaker plus galeed `llm_calls` recording).
 - **Contradiction confirmation:** a local model must confirm each rule-admitted

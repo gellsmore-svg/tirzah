@@ -76,6 +76,8 @@ class RuntimeConfig(_StrictModel):
     # Section- or document-title regexes whose passages are about another
     # subject that reuses the same words, and define nothing for these terms.
     definition_exclude_titles: list[str] = Field(default_factory=list)
+    # Ask the confirmer this many times per pair and take the majority verdict.
+    definition_confirmation_samples: int = Field(default=1, ge=1, le=5)
     # Walk Cairn plan steps in depends_on order (SPEC §4.6) instead of only
     # wrapping a monolithic ask pipeline.
     plan_interpretive_execution_enabled: bool = False

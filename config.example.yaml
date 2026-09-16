@@ -56,6 +56,10 @@ runtime:
   # another subject and so define nothing, e.g. ["route map"] to skip a
   # biochemistry document that uses "field" for something of its own.
   # definition_exclude_titles: []
+  # Ask the confirmer this many times per pair and take the majority verdict
+  # (1-5). Local models disagree with themselves between runs; 3 costs about
+  # twice a single sample, because a decided vote stops early.
+  # definition_confirmation_samples: 1
   # HTTP-backed embedding adapters are not compliant for ingestion/retrieval memory operations.
   allow_http_ingestion_adapters: false
   embedding_model: nomic-embed-text:latest

@@ -297,6 +297,33 @@ def test_definition_confirmer_asks_a_term_anchored_question(monkeypatch) -> None
     assert make_definition_confirmer(None) is None
 
 
+def test_definition_confirmer_votes_when_sampled(monkeypatch) -> None:
+    import tirzah.adapters.answer as answer
+    from tirzah.config import RuntimeConfig
+    from tirzah.retrieval.definitions import _passage, make_definition_confirmer
+
+    replies = iter([
+        "CONFLICT - different things", "SAME - a restatement", "CONFLICT - really different",  # 2 of 3
+        "SAME - one", "SAME - two",                                                            # decided early
+        "CONFLICT - a", "SAME - b", "UNRELATED - c",                                           # no majority
+    ])
+    monkeypatch.setattr(answer, "generate_text", lambda *_a, **_k: {"answer": next(replies)})
+    confirm = make_definition_confirmer(RuntimeConfig(definition_confirmation_samples=3))
+    a = _passage({"term": "T2", "sentence": "T2 names secondary ordering conditions.", "title": "Old", "context": "x"})
+    b = _passage({"term": "T2", "sentence": "T2 names transient structures.", "title": "New", "context": "y"})
+
+    majority = confirm(a, b)
+    assert majority["status"] == "confirmed" and majority["votes"] == ["CONFLICT", "SAME", "CONFLICT"]
+    assert majority["reason"].startswith("CONFLICT - different things")  # the reason that won
+
+    early = confirm(a, b)
+    assert early["status"] == "rejected" and early["samples"] == 2  # stops once a label can't be beaten
+
+    split = confirm(a, b)
+    assert split["status"] == "rejected" and split["label"] == "NO_MAJORITY"
+    assert "CONFLICT" in split["reason"] and "UNRELATED" in split["reason"]
+
+
 def test_cli_definition_drift_wires_terms_and_defaults(monkeypatch, capsys) -> None:
     import json
     import sys
