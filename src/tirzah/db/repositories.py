@@ -2199,6 +2199,9 @@ def definition_drift_candidate_document(
             "target_polarity": b.get("polarity"),
             "source_found_by": a.get("source"),
             "target_found_by": b.get("source"),
+            # How many passage pairs state this same change, and where they are.
+            "group_size": candidate.get("group_size", 1),
+            "supporting": candidate.get("supporting") or [],
         },
         "selection_context": {"candidate_source": DEFINITION_DRIFT_SOURCE, "term": candidate["term"]},
         "confirmation": confirmation_record(candidate.get("confirmation"), now),
