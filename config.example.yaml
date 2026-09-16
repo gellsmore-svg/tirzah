@@ -60,6 +60,14 @@ runtime:
   # (1-5). Local models disagree with themselves between runs; 3 costs about
   # twice a single sample, because a decided vote stops early.
   # definition_confirmation_samples: 1
+  # Confirmers and routers pin sampling so a verdict is repeatable; answers
+  # keep the model's defaults. Set classification_temperature to null to
+  # follow the model instead. ollama_temperature / ollama_seed apply to every
+  # Ollama call.
+  # classification_temperature: 0.0
+  # classification_seed: 0
+  # ollama_temperature:
+  # ollama_seed:
   # HTTP-backed embedding adapters are not compliant for ingestion/retrieval memory operations.
   allow_http_ingestion_adapters: false
   embedding_model: nomic-embed-text:latest

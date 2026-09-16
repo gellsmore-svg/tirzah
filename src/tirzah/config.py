@@ -78,6 +78,14 @@ class RuntimeConfig(_StrictModel):
     definition_exclude_titles: list[str] = Field(default_factory=list)
     # Ask the confirmer this many times per pair and take the majority verdict.
     definition_confirmation_samples: int = Field(default=1, ge=1, le=5)
+    # Sampling options for Ollama calls; None leaves the model's own defaults.
+    ollama_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    ollama_seed: int | None = None
+    # Classification calls (confirmers and routers) run deterministically:
+    # local models drift between runs, which makes a verdict unrepeatable and
+    # so unmeasurable. Set to None to follow the model's defaults instead.
+    classification_temperature: float | None = Field(default=0.0, ge=0.0, le=2.0)
+    classification_seed: int | None = 0
     # Walk Cairn plan steps in depends_on order (SPEC §4.6) instead of only
     # wrapping a monolithic ask pipeline.
     plan_interpretive_execution_enabled: bool = False

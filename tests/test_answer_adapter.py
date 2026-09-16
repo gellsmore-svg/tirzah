@@ -285,6 +285,40 @@ def test_ollama_http_adapter_sends_format_and_think(monkeypatch) -> None:
     assert captured["timeout"] == RuntimeConfig().ollama_timeout_seconds
     assert answer["answer"] == "answer"
 
+def test_ollama_http_sends_sampling_options(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return b'{"response":"answer"}'
+
+    def fake_urlopen(req, timeout):
+        captured["body"] = req.data
+        return FakeResponse()
+
+    import tirzah.adapters.answer as answer_module
+
+    monkeypatch.setattr(answer_module.request, "urlopen", fake_urlopen)
+    prompt = {"prompt_text": "prompt body", "context_metadata": {"included": []}}
+
+    OllamaHttpAnswerAdapter(
+        RuntimeConfig(ollama_temperature=0.0, ollama_seed=7, ollama_num_ctx=2048)
+    ).answer(prompt)
+    assert b'"temperature": 0.0' in captured["body"]
+    assert b'"seed": 7' in captured["body"]
+    assert b'"num_ctx": 2048' in captured["body"]
+
+    # Unset, the model keeps its own sampling.
+    OllamaHttpAnswerAdapter(RuntimeConfig(ollama_num_ctx=0)).answer(prompt)
+    assert b'"options"' not in captured["body"]
+
+
 requires_hoglah = pytest.mark.skipif(
     importlib.util.find_spec("hoglah") is None,
     reason="hoglah optional dependency is not installed",

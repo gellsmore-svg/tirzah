@@ -285,16 +285,56 @@ def test_definition_confirmer_asks_a_term_anchored_question(monkeypatch) -> None
     monkeypatch.setattr(answer, "generate_text", fake)
     confirm = make_definition_confirmer(RuntimeConfig())
     a = _passage({"term": "T2", "sentence": "T2 names secondary ordering conditions.", "title": "Old",
+                  "body": "secondary ordering conditions", "verb": "names", "polarity": "asserts",
                   "context": "Chapter 3 context."})
     b = _passage({"term": "T2", "sentence": "T2 names transient field and process structures.", "title": "New",
+                  "body": "transient field and process structures", "verb": "names", "polarity": "asserts",
                   "context": "Chapter 4 context."})
     assert confirm(a, b)["status"] == "confirmed"
-    assert 'what "T2" is or names' in prompts[0] and "secondary ordering conditions" in prompts[0]
-    assert "Chapter 3 context." in prompts[0] and "Chapter 4 context." in prompts[0]
+    assert 'what "T2" is or names' in prompts[0]
+    # The claim, not the sentence with its paragraph: prose dragged verdicts to SAME.
+    assert "Definition A (from \"Old\"): T2 names secondary ordering conditions" in prompts[0]
+    assert "Chapter 3 context." not in prompts[0] and "Chapter 4 context." not in prompts[0]
     assert confirm(a, b)["status"] == "rejected"
     assert confirm(a, b)["status"] == "unparsed"
     assert make_definition_confirmer(RuntimeConfig(contradiction_confirmation_enabled=False)) is None
     assert make_definition_confirmer(None) is None
+
+
+def test_classification_calls_pin_sampling(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    import tirzah.adapters.answer as answer
+    from tirzah.config import RuntimeConfig
+    from tirzah.retrieval.contradictions import deterministic_classification_runtime
+    from tirzah.retrieval.definitions import _passage, make_definition_confirmer
+
+    seen: dict[str, object] = {}
+
+    def fake(runtime, _prompt, **_kwargs):
+        seen["temperature"] = runtime.ollama_temperature
+        seen["seed"] = runtime.ollama_seed
+        return {"answer": "SAME - a restatement"}
+
+    monkeypatch.setattr(answer, "generate_text", fake)
+    passage = _passage({"term": "T1", "sentence": "T1 names the baseline.", "title": "x", "context": "c"})
+    make_definition_confirmer(RuntimeConfig())(passage, passage)
+
+    assert seen == {"temperature": 0.0, "seed": 0}  # a verdict must be repeatable
+    assert RuntimeConfig().ollama_temperature is None  # answer generation is left alone
+    stub = SimpleNamespace(classification_temperature=0.0, classification_seed=0)
+    assert deterministic_classification_runtime(stub) is stub  # nothing to copy, nothing to pin
+
+
+def test_definition_claim_renders_denials_and_falls_back() -> None:
+    from tirzah.retrieval.definitions import definition_claim
+
+    asserts = {"body": "the primary material baseline", "verb": "names", "polarity": "asserts"}
+    denies = {"body": "the substrate baseline itself", "verb": "names", "polarity": "denies"}
+    assert definition_claim(asserts, "T1") == "T1 names the primary material baseline"
+    assert definition_claim(denies, "T1") == "T1 is not the substrate baseline itself"
+    # A model-found definition may have no parsed body; the sentence stands in.
+    assert definition_claim({"sentence": "T1 is whatever persists."}, "T1") == "T1 is whatever persists."
 
 
 def test_definition_confirmer_votes_when_sampled(monkeypatch) -> None:

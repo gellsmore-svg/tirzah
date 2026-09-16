@@ -575,17 +575,8 @@ DEFINITION_CONFIRMATION_STEP_NAME = "definition_confirmation"
 # own closed question about the term.
 DEFINITION_CONFIRMATION_PROMPT = """You are checking how a research-notes corpus defines the term "{term}".
 
-Definition A (from "{title_a}"):
-{sentence_a}
-
-Definition B (from "{title_b}"):
-{sentence_b}
-
-Context around A:
-{context_a}
-
-Context around B:
-{context_b}
+Definition A (from "{title_a}"): {claim_a}
+Definition B (from "{title_b}"): {claim_b}
 
 Do A and B give incompatible accounts of what "{term}" is or names, so that if one is the current definition the other must be revised or retired?
 Different words for the same idea, or one adding detail to the other, are NOT incompatible.
@@ -596,16 +587,30 @@ SAME - the same definition, restated or elaborated
 UNRELATED - one of them does not actually define "{term}" (it describes something else, an analogy, or someone else's view)
 Then give a one-sentence reason."""
 DEFINITION_LABEL_PATTERN = re.compile(r"\b(CONFLICT|SAME|UNRELATED)\b")
-DEFINITION_CONTEXT_CHARS = 400
+
+
+def definition_claim(passage: dict[str, Any], term: str) -> str:
+    """The claim a passage makes, without its surrounding prose.
+
+    "T1 names the primary material baseline", not the sentence and the
+    paragraph around it: measured on mnemosyne_dev, sending the prose as well
+    dragged real redefinitions to SAME (26 confirmed of 300 against 98, with
+    the T1, T2, current and charge changes recovered).
+    """
+    body = str(passage.get("body") or "").strip()
+    if not body:
+        return str(passage.get("sentence") or passage.get("text") or "").strip()
+    if passage.get("polarity") == "denies":
+        return f"{term} is not {body}"
+    return f"{term} {passage.get('verb') or 'is'} {body}"
 
 
 def definition_confirmation_prompt(source: dict[str, Any], target: dict[str, Any]) -> str:
+    term = source.get("term") or target.get("term") or ""
     return DEFINITION_CONFIRMATION_PROMPT.format(
-        term=source.get("term") or target.get("term") or "",
-        title_a=source.get("title") or "", sentence_a=source.get("sentence") or source.get("text") or "",
-        title_b=target.get("title") or "", sentence_b=target.get("sentence") or target.get("text") or "",
-        context_a=(source.get("context") or "")[:DEFINITION_CONTEXT_CHARS],
-        context_b=(target.get("context") or "")[:DEFINITION_CONTEXT_CHARS],
+        term=term,
+        title_a=source.get("title") or "", claim_a=definition_claim(source, term),
+        title_b=target.get("title") or "", claim_b=definition_claim(target, term),
     )
 
 
@@ -682,6 +687,7 @@ def _passage(definition: dict[str, Any]) -> dict[str, Any]:
     # Lead with the defining sentence so a general confirmer always sees it.
     context = definition.get("context") or ""
     return {"title": definition.get("title"), "term": definition.get("term"), "sentence": definition["sentence"],
+            "body": definition.get("body"), "verb": definition.get("verb"), "polarity": definition.get("polarity"),
             "context": context, "text": f"{definition['sentence']}\n\n{context}"}
 
 
