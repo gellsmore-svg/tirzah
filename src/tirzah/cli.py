@@ -2510,6 +2510,7 @@ def main() -> None:
             router=None if args.no_second_pass else make_definition_router(runtime, db=db),
             confirmer=None if args.skip_confirmation else make_definition_confirmer(runtime, db=db),
             frame_titles=list(getattr(runtime, "definition_frame_titles", None) or []),
+            exclude_titles=list(getattr(runtime, "definition_exclude_titles", None) or []),
             created_by=args.created_by,
             dry_run=not args.apply,
         )

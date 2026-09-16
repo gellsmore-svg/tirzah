@@ -73,6 +73,9 @@ class RuntimeConfig(_StrictModel):
     definition_second_pass_limit: int = Field(default=20, ge=0, le=500)
     # Section-title regexes whose definitions report someone else's view.
     definition_frame_titles: list[str] = Field(default_factory=list)
+    # Section- or document-title regexes whose passages are about another
+    # subject that reuses the same words, and define nothing for these terms.
+    definition_exclude_titles: list[str] = Field(default_factory=list)
     # Walk Cairn plan steps in depends_on order (SPEC §4.6) instead of only
     # wrapping a monolithic ask pipeline.
     plan_interpretive_execution_enabled: bool = False
