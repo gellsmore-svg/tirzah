@@ -132,8 +132,15 @@ class OllamaHttpAnswerAdapter:
             "prompt": prompt["prompt_text"],
             "stream": False,
         }
+        options: dict[str, Any] = {}
         if getattr(self.config, "ollama_num_ctx", 0):
-            request_body["options"] = {"num_ctx": self.config.ollama_num_ctx}
+            options["num_ctx"] = self.config.ollama_num_ctx
+        if getattr(self.config, "ollama_temperature", None) is not None:
+            options["temperature"] = self.config.ollama_temperature
+        if getattr(self.config, "ollama_seed", None) is not None:
+            options["seed"] = self.config.ollama_seed
+        if options:
+            request_body["options"] = options
         if self.config.ollama_format:
             request_body["format"] = self.config.ollama_format
         think_value = ollama_think_http_value(self.config.ollama_think)

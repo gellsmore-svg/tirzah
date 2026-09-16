@@ -89,6 +89,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     these sizes disagrees with itself between runs (measured: 14% of
     identical pairs). It stops early once a label cannot be beaten, records
     the `votes`, and fails closed when there is no majority.
+- **Deterministic classification calls.** Confirmers and routers now pin
+  Ollama's sampling (`classification_temperature`, default 0, and
+  `classification_seed`, default 0) so the same pair judged twice gives the
+  same verdict; answer generation keeps the model's own defaults. Measured on
+  mnemosyne_dev, verdicts previously agreed on only 87% of identical pairs
+  between runs, which is larger than the effect of most prompt or rule
+  changes and made them unmeasurable. `ollama_temperature` and `ollama_seed`
+  set the options for any Ollama call.
   - The confirmer and the second pass share one bounded model-call helper
     (a circuit breaker plus galeed `llm_calls` recording).
 - **Contradiction confirmation:** a local model must confirm each rule-admitted

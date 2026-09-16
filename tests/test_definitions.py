@@ -297,6 +297,31 @@ def test_definition_confirmer_asks_a_term_anchored_question(monkeypatch) -> None
     assert make_definition_confirmer(None) is None
 
 
+def test_classification_calls_pin_sampling(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    import tirzah.adapters.answer as answer
+    from tirzah.config import RuntimeConfig
+    from tirzah.retrieval.contradictions import deterministic_classification_runtime
+    from tirzah.retrieval.definitions import _passage, make_definition_confirmer
+
+    seen: dict[str, object] = {}
+
+    def fake(runtime, _prompt, **_kwargs):
+        seen["temperature"] = runtime.ollama_temperature
+        seen["seed"] = runtime.ollama_seed
+        return {"answer": "SAME - a restatement"}
+
+    monkeypatch.setattr(answer, "generate_text", fake)
+    passage = _passage({"term": "T1", "sentence": "T1 names the baseline.", "title": "x", "context": "c"})
+    make_definition_confirmer(RuntimeConfig())(passage, passage)
+
+    assert seen == {"temperature": 0.0, "seed": 0}  # a verdict must be repeatable
+    assert RuntimeConfig().ollama_temperature is None  # answer generation is left alone
+    stub = SimpleNamespace(classification_temperature=0.0, classification_seed=0)
+    assert deterministic_classification_runtime(stub) is stub  # nothing to copy, nothing to pin
+
+
 def test_definition_confirmer_votes_when_sampled(monkeypatch) -> None:
     import tirzah.adapters.answer as answer
     from tirzah.config import RuntimeConfig

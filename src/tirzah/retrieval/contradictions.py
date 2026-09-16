@@ -118,6 +118,28 @@ def parse_confirmation_label(text: Any) -> str:
     return match.group(1) if match else "UNPARSED"
 
 
+def deterministic_classification_runtime(runtime_config: Any) -> Any:
+    """Runtime config with sampling pinned for classification calls.
+
+    A local model asked the same question twice answers differently often
+    enough to swamp the effect of a prompt or rule change (measured on
+    mnemosyne_dev: verdicts agreed on 87% of identical pairs between runs), so
+    confirmers and routers pin temperature and seed while answer generation
+    keeps the model's own defaults.
+    """
+    copy = getattr(runtime_config, "model_copy", None)
+    if copy is None:
+        return runtime_config
+    updates: dict[str, Any] = {}
+    temperature = getattr(runtime_config, "classification_temperature", None)
+    seed = getattr(runtime_config, "classification_seed", None)
+    if temperature is not None:
+        updates["ollama_temperature"] = temperature
+    if seed is not None:
+        updates["ollama_seed"] = seed
+    return copy(update=updates) if updates else runtime_config
+
+
 def bounded_model_caller(
     runtime_config: Any,
     *,
@@ -136,6 +158,7 @@ def bounded_model_caller(
     """
     adapter_name = getattr(runtime_config, "contradiction_confirmation_adapter", None) or None
     model = getattr(runtime_config, "contradiction_confirmation_model", None) or None
+    runtime = deterministic_classification_runtime(runtime_config)
     trace_id = f"{step_name.replace('_', '-')}-{uuid.uuid4().hex[:12]}"
     state: dict[str, str | None] = {"unavailable": None}
 
@@ -172,7 +195,7 @@ def bounded_model_caller(
         from tirzah.adapters.answer import generate_text
 
         try:
-            result = generate_text(runtime_config, prompt, adapter_name=adapter_name, model=model)
+            result = generate_text(runtime, prompt, adapter_name=adapter_name, model=model)
         except Exception as error:
             state["unavailable"] = str(error)
             record(prompt, {}, None, str(error))
