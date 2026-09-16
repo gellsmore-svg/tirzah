@@ -40,6 +40,18 @@ runtime:
   # contradiction_confirmation_enabled: true
   # contradiction_confirmation_adapter:
   # contradiction_confirmation_model:
+  # Definition drift (`tirzah definition-drift`): terms whose definitions are
+  # compared across the corpus to find contradictions, e.g. [T1, current].
+  # A bounded model second pass (same adapter/model as above) checks passages
+  # that mention a term in their heading but that the patterns did not route.
+  # Each pair is then confirmed with a definition-specific question.
+  # definition_terms: []
+  # definition_second_pass_enabled: true
+  # definition_second_pass_limit: 20
+  # Section-title regexes (case-insensitive) whose definitions report someone
+  # else's view, on top of built-in ones such as "Comparator", "Objection",
+  # "Replaced assumption" and "Guardrail", e.g. ["general relativity", "\\bnewton\\b"].
+  # definition_frame_titles: []
   # HTTP-backed embedding adapters are not compliant for ingestion/retrieval memory operations.
   allow_http_ingestion_adapters: false
   embedding_model: nomic-embed-text:latest

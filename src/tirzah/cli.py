@@ -715,6 +715,21 @@ def add_enqueue_contradiction_batch_arguments(command: argparse.ArgumentParser) 
     command.add_argument("--format", choices=["json", "text"], default="json")
 
 
+def add_definition_drift_arguments(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--term", action="append", default=[],
+                         help="Term whose definitions to compare (repeatable). Defaults to runtime.definition_terms.")
+    command.add_argument("--pairs-per-term", type=int, default=10)
+    command.add_argument("--second-pass-limit", type=int, default=None,
+                         help="Model second-pass passages per term (default: runtime.definition_second_pass_limit).")
+    command.add_argument("--no-second-pass", action="store_true")
+    command.add_argument("--cross-document-only", action="store_true")
+    command.add_argument("--created-by", default="user")
+    command.add_argument("--apply", action="store_true", help="Write confirmed pairs to the review queue (default: preview).")
+    command.add_argument("--skip-confirmation", action="store_true",
+                         help="Queue pairs without local-model confirmation (testing only).")
+    command.add_argument("--format", choices=["json", "text"], default="json")
+
+
 def render_contradiction_candidates_text(report: dict) -> str:
     diagnostics = report.get("diagnostics") or {}
     exclusions = diagnostics.get("exclusions") or {}
@@ -1325,6 +1340,13 @@ def main() -> None:
         help="queue conservative contradicts candidates across a node scope",
     )
     add_enqueue_contradiction_batch_arguments(enqueue_contradiction_batch)
+
+    definition_drift = _add_cmd(
+        subcommands,
+        "definition-drift",
+        help="find contradicts candidates where definitions of a term disagree",
+    )
+    add_definition_drift_arguments(definition_drift)
 
     semantic_queue = _add_cmd(subcommands, "semantic-edge-candidates")
     semantic_queue.add_argument("--status", default="pending")
@@ -2463,6 +2485,35 @@ def main() -> None:
                 indent=2,
             )
         )
+        return
+
+    if args.command == "definition-drift":
+        from tirzah.db import repositories
+        from tirzah.retrieval.definitions import (
+            make_definition_confirmer,
+            make_definition_router,
+            render_definition_drift_text,
+        )
+
+        ensure_indexes(db)
+        runtime = getattr(config, "runtime", None)
+        terms = args.term or list(getattr(runtime, "definition_terms", None) or [])
+        limit = args.second_pass_limit
+        if limit is None:
+            limit = getattr(runtime, "definition_second_pass_limit", 20)
+        result = repositories.enqueue_definition_drift_candidates(
+            db,
+            terms,
+            pairs_per_term=args.pairs_per_term,
+            include_same_document=not args.cross_document_only,
+            second_pass_limit=limit,
+            router=None if args.no_second_pass else make_definition_router(runtime, db=db),
+            confirmer=None if args.skip_confirmation else make_definition_confirmer(runtime, db=db),
+            frame_titles=list(getattr(runtime, "definition_frame_titles", None) or []),
+            created_by=args.created_by,
+            dry_run=not args.apply,
+        )
+        print(render_definition_drift_text(result) if args.format == "text" else json.dumps(result, indent=2, default=str))
         return
 
     if args.command == "enqueue-contradiction-batch":
