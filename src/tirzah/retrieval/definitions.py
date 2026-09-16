@@ -16,7 +16,7 @@ pass (see ``make_definition_router``) only catches phrasings it misses.
 from __future__ import annotations
 
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Any, Iterable
 
 from tirzah.retrieval.contradictions import claim_tokens
@@ -617,25 +617,47 @@ def make_definition_confirmer(runtime_config: Any, *, db: Any = None, session_id
     ``confirmed`` (CONFLICT), ``rejected`` (SAME or UNRELATED), ``unparsed`` or
     ``unavailable``, like ``make_contradiction_confirmer``, and shares its
     adapter, model, circuit breaker and ``llm_calls`` recording.
+
+    A local model at these sizes disagrees with itself between runs, so
+    ``runtime.definition_confirmation_samples`` asks the same question that
+    many times and takes the majority, stopping as soon as one label has
+    enough votes to win. A verdict carries its ``votes``; a pair with no
+    majority is ``NO_MAJORITY`` and fails closed.
     """
     if runtime_config is None or not getattr(runtime_config, "contradiction_confirmation_enabled", True):
         return None
     from tirzah.retrieval.contradictions import bounded_model_caller
 
+    samples = max(1, int(getattr(runtime_config, "definition_confirmation_samples", 1) or 1))
     call = bounded_model_caller(runtime_config, step_name=DEFINITION_CONFIRMATION_STEP_NAME, db=db,
                                 session_id=session_id)
 
     def confirm(source: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:
-        answer, info = call(definition_confirmation_prompt(source, target))
-        if answer is None:
-            return info
-        match = DEFINITION_LABEL_PATTERN.search(answer.upper())
-        label = match.group(1) if match else "UNPARSED"
+        prompt = definition_confirmation_prompt(source, target)
+        needed = samples // 2 + 1
+        votes: list[str] = []
+        reasons: dict[str, str] = {}
+        info: dict[str, Any] = {}
+        for _ in range(samples):
+            answer, info = call(prompt)
+            if answer is None:
+                return info  # unavailable: fail closed, whatever the earlier samples said
+            match = DEFINITION_LABEL_PATTERN.search(answer.upper())
+            label = match.group(1) if match else "UNPARSED"
+            votes.append(label)
+            reasons.setdefault(label, answer.strip()[:300])
+            if votes.count(label) >= needed:
+                break
+        winner, count = Counter(votes).most_common(1)[0]
+        if count < needed:
+            winner = "NO_MAJORITY"  # the model contradicted itself; fail closed
         return {
             **info,
-            "status": {"CONFLICT": "confirmed", "UNPARSED": "unparsed"}.get(label, "rejected"),
-            "label": label,
-            "reason": answer.strip()[:300],
+            "status": {"CONFLICT": "confirmed", "UNPARSED": "unparsed"}.get(winner, "rejected"),
+            "label": winner,
+            "reason": reasons.get(winner) or f"votes: {', '.join(votes)}",
+            "votes": votes,
+            "samples": len(votes),
         }
 
     confirm.trace_id = call.trace_id  # type: ignore[attr-defined]
