@@ -170,9 +170,8 @@ class RuntimeConfig(_StrictModel):
     codex_model: str | None = None
     codex_sandbox: str = "read-only"
     codex_ephemeral: bool = True
-    # Prefix `sudo -n -E --` so Linux sandbox helpers can run elevated.
-    # Requires passwordless sudo (`sudo -n`); leave false when a TTY password
-    # prompt would hang headless runs.
+    # Prefix `sudo -n -E --` only when this is true. False never escalates,
+    # including after an unprivileged failure. Requires passwordless sudo.
     codex_sudo: bool = False
     # Optional Google Gemini CLI (`gemini -p`). Cloud-backed. Alias: gemini_cli.
     google_executable: Path = Path("gemini")

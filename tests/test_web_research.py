@@ -10,11 +10,51 @@ from tirzah.sessions.interaction import (
     execute_tool_calls,
     build_agentic_answer_envelope,
 )
-from tirzah.web_research import WebResearchClient, WebResearchConfig, _public_url
+from tirzah.web_research import (
+    WebResearchClient,
+    WebResearchConfig,
+    _PinnedHTTPConnection,
+    _public_url,
+)
 
 
 class FakeDb:
     pass
+
+
+@pytest.mark.parametrize("address", ["224.0.0.1", "100.64.0.1", "64:ff9b::7f00:1", "10.1.1.1"])
+def test_non_public_addresses_are_blocked(monkeypatch, address):
+    monkeypatch.setattr(
+        "tirzah.web_research.socket.getaddrinfo",
+        lambda *a, **k: [(2, 1, 6, "", (address, 80))],
+    )
+    with pytest.raises(ValueError, match="Private or non-global"):
+        _public_url("http://example.test/x", allow_private_hosts=False)
+
+
+def test_connection_uses_the_checked_address(monkeypatch):
+    monkeypatch.setattr(
+        "tirzah.web_research.socket.getaddrinfo",
+        lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 80))],
+    )
+    seen = {}
+
+    def fake_create(address, timeout, source_address):
+        seen["address"] = address
+        raise OSError("stop")
+
+    conn = _PinnedHTTPConnection("example.test", 80, timeout=1, allow_private_hosts=False)
+    monkeypatch.setattr(conn, "_create_connection", fake_create)
+    with pytest.raises(OSError, match="stop"):
+        conn.connect()
+    assert seen["address"] == ("93.184.216.34", 80)
+
+
+def test_outcome_fields_are_not_interpolated_into_attributes():
+    from tirzah.web.outcomes_ui import OUTCOMES_COMPOSER_HTML
+
+    assert "value='\"+" not in OUTCOMES_COMPOSER_HTML
+    assert "id.value" in OUTCOMES_COMPOSER_HTML
 
 
 def test_private_hosts_are_blocked(monkeypatch):

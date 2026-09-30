@@ -142,7 +142,7 @@ runtime:
   # codex_model:
   # codex_sandbox: read-only
   # codex_ephemeral: true
-  # Prefix sudo -n -E when the Linux sandbox needs elevation (NOPASSWD required).
+  # Prefix sudo -n -E only when true (NOPASSWD required). False never escalates.
   # codex_sudo: false
   # Optional Google Gemini CLI (`gemini -p`; adapter google_cli or gemini_cli).
   # Auth: GEMINI_API_KEY or `gemini` login.

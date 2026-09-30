@@ -80,6 +80,26 @@ def test_codex_cli_command_can_prefix_sudo() -> None:
     assert "codex" in cmd and "exec" in cmd
 
 
+def test_codex_sudo_false_does_not_escalate(monkeypatch) -> None:
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        raise subprocess.CalledProcessError(1, cmd, output="", stderr="permission denied")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    try:
+        CodexCliAnswerAdapter(RuntimeConfig(codex_sudo=False)).answer(
+            {"prompt_text": "hello", "context_metadata": {"included": []}}
+        )
+    except RuntimeError as exc:
+        assert "permission denied" in str(exc).lower()
+    else:
+        raise AssertionError("expected the unprivileged failure to propagate")
+    assert calls
+    assert all(cmd[0] != "sudo" for cmd in calls)
+
+
 def test_codex_cli_adapter_pipes_prompt(monkeypatch) -> None:
     captured = {}
 

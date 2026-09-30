@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import html
+import http.client
 import ipaddress
 import json
 import re
@@ -67,29 +68,121 @@ class _TextExtractor(HTMLParser):
                 self.parts.append(value)
 
 
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
+def _address_is_public(raw: str) -> bool:
+    """True only for a globally routable address.
+
+    Unwraps IPv4-mapped IPv6 and NAT64 (64:ff9b::/96) so an embedded
+    non-public IPv4 address is judged as that IPv4 address. Multicast and
+    shared address space are not public even when ``is_global`` is true.
+    """
+    ip = ipaddress.ip_address(raw.split("%", 1)[0])
+    if isinstance(ip, ipaddress.IPv6Address):
+        mapped = ip.ipv4_mapped
+        if mapped is not None:
+            ip = mapped
+        elif ip in _NAT64:
+            ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return not (
+        ip.is_multicast
+        or ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_unspecified
+        or not ip.is_global
+    )
+
+
+def _checked_ip(host: str, port: int, *, allow_private: bool) -> str:
+    """Resolve *host* and return one address the socket may connect to.
+
+    When private hosts are refused, every answer must be public. The caller
+    connects to the returned address, not to a later lookup of *host*.
+    """
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as error:
+        raise ValueError(f"Could not resolve web host: {host}") from error
+    chosen: str | None = None
+    for info in infos:
+        address = info[4][0]
+        if not allow_private and not _address_is_public(address):
+            raise ValueError(f"Private or non-global web host is blocked: {host}")
+        if chosen is None:
+            chosen = address
+    if chosen is None:
+        raise ValueError(f"Could not resolve web host: {host}")
+    return chosen
+
+
 def _public_url(url: str, *, allow_private_hosts: bool) -> str:
     parsed = parse.urlsplit(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("Web research only permits absolute http/https URLs.")
     if parsed.username or parsed.password:
         raise ValueError("Credential-bearing URLs are not permitted.")
-    if allow_private_hosts:
-        return url
-    try:
-        addresses = {
-            item[4][0]
-            for item in socket.getaddrinfo(
-                parsed.hostname,
-                parsed.port or (443 if parsed.scheme == "https" else 80),
-            )
-        }
-    except socket.gaierror as error:
-        raise ValueError(f"Could not resolve web host: {parsed.hostname}") from error
-    if any(not ipaddress.ip_address(address).is_global for address in addresses):
-        raise ValueError(
-            f"Private or non-global web host is blocked: {parsed.hostname}"
-        )
+    if not allow_private_hosts:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        _checked_ip(parsed.hostname, port, allow_private=False)
     return url
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, host, port=None, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None, *, allow_private_hosts=False):
+        super().__init__(host, port, timeout, source_address)
+        self.allow_private_hosts = allow_private_hosts
+
+    def connect(self):
+        ip = _checked_ip(self.host, self.port, allow_private=self.allow_private_hosts)
+        self.sock = self._create_connection((ip, self.port), self.timeout, self.source_address)
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, host, port=None, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None, *, context=None, allow_private_hosts=False):
+        super().__init__(host, port, timeout=timeout, source_address=source_address, context=context)
+        self.allow_private_hosts = allow_private_hosts
+
+    def connect(self):
+        ip = _checked_ip(self.host, self.port, allow_private=self.allow_private_hosts)
+        self.sock = self._create_connection((ip, self.port), self.timeout, self.source_address)
+        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        if self._tunnel_host:
+            self._tunnel()
+        server_hostname = self.host if self._context.check_hostname else None
+        self.sock = self._context.wrap_socket(self.sock, server_hostname=server_hostname)
+
+
+class _PinnedHTTPHandler(request.HTTPHandler):
+    def __init__(self, allow_private_hosts: bool):
+        super().__init__()
+        self.allow_private_hosts = allow_private_hosts
+
+    def http_open(self, req):
+        allow = self.allow_private_hosts
+
+        def factory(host, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, **kwargs):
+            return _PinnedHTTPConnection(host, timeout=timeout, allow_private_hosts=allow, **kwargs)
+
+        return self.do_open(factory, req)
+
+
+class _PinnedHTTPSHandler(request.HTTPSHandler):
+    def __init__(self, allow_private_hosts: bool):
+        super().__init__()
+        self.allow_private_hosts = allow_private_hosts
+
+    def https_open(self, req):
+        allow = self.allow_private_hosts
+
+        def factory(host, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, context=None, **kwargs):
+            return _PinnedHTTPSConnection(
+                host, timeout=timeout, context=context, allow_private_hosts=allow, **kwargs
+            )
+
+        return self.do_open(factory, req, context=self._context)
 
 
 class _SafeRedirectHandler(request.HTTPRedirectHandler):
@@ -115,7 +208,11 @@ class WebResearchClient:
                 "Accept": "text/html,text/plain,application/json",
             },
         )
-        opener = request.build_opener(_SafeRedirectHandler(allow_private_hosts))
+        opener = request.build_opener(
+            _PinnedHTTPHandler(allow_private_hosts),
+            _PinnedHTTPSHandler(allow_private_hosts),
+            _SafeRedirectHandler(allow_private_hosts),
+        )
         return opener.open(req, timeout=self.config.timeout_seconds)
 
     def search(self, query, *, limit=None):

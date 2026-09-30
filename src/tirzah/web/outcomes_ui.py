@@ -92,17 +92,44 @@ small.hint { color:var(--muted); } code { background:var(--line-soft); padding:.
 <script>
 const $ = (id) => document.getElementById(id);
 const setStatus = (t) => { $("status").textContent = t; };
-function esc(s){ const d=document.createElement("div"); d.textContent=s==null?"":s; return d.innerHTML; }
+function esc(s){
+  return String(s==null?"":s)
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;")
+    .replace(/'/g,"&#39;");
+}
 
 function outcomeRow(o){
   const div = document.createElement("div");
   div.className = "outcome";
-  div.innerHTML =
-    "<div class='row'><input type='text' class='o-id' placeholder='id (O1)' style='flex:0 0 5em' value='"+esc(o.id||"")+"'>"
-    + "<input type='text' class='o-stmt' placeholder='outcome statement' value='"+esc(o.statement||"")+"'>"
-    + "<button class='del'>✕</button></div>"
-    + "<input type='text' class='o-check' placeholder='optional check (keywords that must appear)' value='"+esc(o.check||"")+"' style='margin-top:.4em'>";
-  div.querySelector(".del").onclick = () => div.remove();
+  const row = document.createElement("div");
+  row.className = "row";
+  const id = document.createElement("input");
+  id.type = "text";
+  id.className = "o-id";
+  id.placeholder = "id (O1)";
+  id.style.flex = "0 0 5em";
+  id.value = o && o.id ? String(o.id) : "";
+  const stmt = document.createElement("input");
+  stmt.type = "text";
+  stmt.className = "o-stmt";
+  stmt.placeholder = "outcome statement";
+  stmt.value = o && o.statement ? String(o.statement) : "";
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "del";
+  del.textContent = "✕";
+  del.onclick = () => div.remove();
+  row.append(id, stmt, del);
+  const check = document.createElement("input");
+  check.type = "text";
+  check.className = "o-check";
+  check.placeholder = "optional check (keywords that must appear)";
+  check.style.marginTop = ".4em";
+  check.value = o && o.check ? String(o.check) : "";
+  div.append(row, check);
   return div;
 }
 function addOutcome(o){ $("outcomes").appendChild(outcomeRow(o||{})); }

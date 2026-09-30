@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Codex CLI adds `sudo` only when `codex_sudo` is true. An unprivileged failure stays unprivileged.
+- Web research connects to the address it checked, and refuses shared, multicast, and embedded non-public addresses.
+- The outcome composer assigns field values in the DOM, and preview text is escaped.
+
 ### Fixed (2026-09-10 review, #32–#66)
 - **CI/release:** `main` is green again, and tag releases now run the test
   suite before publishing to PyPI (#38, #39).
