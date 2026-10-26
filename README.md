@@ -66,6 +66,11 @@ as a compatibility alias.
    records a restart-state snapshot, so a session can be inspected and
    resumed.
 
+For coding agents connected through Keturah MCP, `search_memory` discovers
+candidate nodes; `read_memory(node_id, offset, max_chars)` then returns the stored
+source text in bounded pages with document identity and provenance. Search snippets
+are discovery hints, not evidence to rely on without reading the source.
+
 ## What else it does
 
 | Feature | In short |
