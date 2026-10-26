@@ -98,6 +98,62 @@ def build_handlers(*, db: Any = None, client: Any = None) -> dict[str, Callable[
         results = [_compact_node(n) for n in nodes]
         return {"query": query, "count": len(results), "results": results}
 
+
+    def read_memory(node_id: str = "", offset: int = 0, max_chars: int = 6000, **_kw: Any) -> dict[str, Any]:
+        """Read preserved source text for a search hit, with provenance and pagination.
+
+        Search previews are discovery aids, not sufficient evidence. This handler
+        reads the original stored node text without re-parsing or summarising it.
+        """
+        from tirzah.retrieval.queries import parse_object_id
+
+        object_id = parse_object_id(node_id)
+        if object_id is None:
+            return {"error": "node_id must be a valid MongoDB ObjectId"}
+        try:
+            start = int(offset)
+            page_size = max(1, min(int(max_chars), 16000))
+        except (TypeError, ValueError, OverflowError):
+            return {"error": "offset and max_chars must be integers"}
+        if start < 0:
+            return {"error": "offset must be non-negative"}
+
+        db_handle = db if db is not None else _default_db()
+        if db_handle is None:
+            return {"error": "tirzah memory is unavailable (no reachable database)"}
+        try:
+            from tirzah.db.memory_store import as_memory_store
+            from tirzah.models.ingestion import INACTIVE_RETRIEVAL_STATUSES
+
+            store = as_memory_store(db_handle)
+            node = store.get_node(object_id)
+            # A search hit should never lead an agent into an unpromoted,
+            # rejected or superseded ingestion tree.
+            if not node or node.get("status") in INACTIVE_RETRIEVAL_STATUSES:
+                return {"error": "node is not available for retrieval"}
+
+            source_text = str(node.get("text") or "")
+            start = min(start, len(source_text))
+            end = min(start + page_size, len(source_text))
+            document = store.get_document(node["document_id"])
+            return {
+                "node_id": str(node["_id"]),
+                "document_id": str(node["document_id"]),
+                "document_title": str(document.get("title") or "") if document else "",
+                "title": str(node.get("title") or ""),
+                "labels": list(node.get("labels") or []),
+                "endorsement_label": node.get("endorsement_label"),
+                "origin_date": node.get("origin_date"),
+                "provenance": node.get("provenance") or {},
+                "text": source_text[start:end],
+                "offset": start,
+                "next_offset": end if end < len(source_text) else None,
+                "total_chars": len(source_text),
+                "truncated": end < len(source_text),
+            }
+        except Exception as exc:  # noqa: BLE001 - keep MCP failures structured
+            return {"error": f"read failed: {type(exc).__name__}: {exc}"}
+
     def coherence_check(
         query: str = "", context: str = "", mode: str = "coherence", **_kw: Any
     ) -> dict[str, Any]:
@@ -167,6 +223,8 @@ def build_handlers(*, db: Any = None, client: Any = None) -> dict[str, Callable[
     return {
         "tirzah.search_memory": search_memory,
         "search_memory": search_memory,
+        "tirzah.read_memory": read_memory,
+        "read_memory": read_memory,
         "tirzah.retrieve": retrieve,
         "retrieve": retrieve,
         "tirzah.coherence_check": coherence_check,

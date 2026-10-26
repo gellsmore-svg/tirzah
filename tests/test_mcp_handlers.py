@@ -102,3 +102,106 @@ def test_coherence_check_reports_unavailable(monkeypatch) -> None:
     monkeypatch.setattr(mcp_handlers, "_default_config", lambda: None)
     handler = mcp_handlers.build_handlers()["coherence_check"]
     assert "unavailable" in handler(query="x")["error"]
+
+
+def test_read_memory_returns_verbatim_paginated_source_and_provenance(monkeypatch) -> None:
+    from bson import ObjectId
+
+    node_id = ObjectId("507f1f77bcf86cd799439011")
+    document_id = ObjectId("507f1f77bcf86cd799439012")
+    original = "An original source passage with enough text to require multiple pages."
+
+    class FakeStore:
+        def get_node(self, requested):
+            assert requested == node_id
+            return {
+                "_id": node_id, "document_id": document_id, "text": original,
+                "title": "Source section", "status": "active", "labels": ["source_chunk"],
+                "endorsement_label": "explicit_endorsed", "origin_date": "2026-10-20",
+                "provenance": {"source_path": "notes/source.md"},
+            }
+
+        def get_document(self, requested):
+            assert requested == document_id
+            return {"title": "Original notes"}
+
+    monkeypatch.setattr("tirzah.db.memory_store.as_memory_store", lambda _db: FakeStore())
+    handler = mcp_handlers.build_handlers(db=object())["tirzah.read_memory"]
+    first = handler(node_id=str(node_id), max_chars=15)
+    assert first["text"] == original[:15]
+    assert first["offset"] == 0 and first["next_offset"] == 15
+    assert first["total_chars"] == len(original) and first["truncated"] is True
+    assert first["document_id"] == str(document_id)
+    assert first["document_title"] == "Original notes"
+    assert first["provenance"] == {"source_path": "notes/source.md"}
+    assert first["endorsement_label"] == "explicit_endorsed"
+    assert first["origin_date"] == "2026-10-20"
+
+    chunks = [first["text"]]
+    next_offset = first["next_offset"]
+    while next_offset is not None:
+        page = handler(node_id=str(node_id), offset=next_offset, max_chars=15)
+        chunks.append(page["text"])
+        next_offset = page["next_offset"]
+    assert "".join(chunks) == original
+
+
+def test_read_memory_binds_output_size_and_rejects_invalid_ids(monkeypatch) -> None:
+    from bson import ObjectId
+
+    node_id = ObjectId("507f1f77bcf86cd799439011")
+    source = "x" * 20000
+
+    class FakeStore:
+        def get_node(self, _node_id):
+            return {"_id": node_id, "document_id": "doc", "text": source, "status": "active"}
+
+        def get_document(self, _document_id):
+            return None
+
+    monkeypatch.setattr("tirzah.db.memory_store.as_memory_store", lambda _db: FakeStore())
+    handler = mcp_handlers.build_handlers(db=object())["read_memory"]
+    assert "error" in handler(node_id="not-an-id")
+    assert "error" in handler(node_id=str(node_id), offset=-1)
+    assert "error" in handler(node_id=str(node_id), offset="nope")
+    result = handler(node_id=str(node_id), max_chars=1000000)
+    assert len(result["text"]) == 16000 and result["next_offset"] == 16000
+    assert result["truncated"] is True
+
+
+def test_read_memory_does_not_expose_inactive_ingestions(monkeypatch) -> None:
+    from bson import ObjectId
+
+    node_id = ObjectId("507f1f77bcf86cd799439011")
+
+    class FakeStore:
+        def __init__(self):
+            self.status = "pending_review"
+
+        def get_node(self, _node_id):
+            return {"_id": node_id, "document_id": "doc", "text": "Private draft", "status": self.status}
+
+        def get_document(self, _document_id):
+            raise AssertionError("inactive node must not be read further")
+
+    store = FakeStore()
+    monkeypatch.setattr("tirzah.db.memory_store.as_memory_store", lambda _db: store)
+    handler = mcp_handlers.build_handlers(db=object())["read_memory"]
+    for status in ("pending_review", "rejected", "superseded"):
+        store.status = status
+        result = handler(node_id=str(node_id))
+        assert "error" in result and "text" not in result
+
+
+def test_read_memory_reports_missing_node_and_database(monkeypatch) -> None:
+    from bson import ObjectId
+
+    node_id = str(ObjectId("507f1f77bcf86cd799439011"))
+    class FakeStore:
+        def get_node(self, _node_id):
+            return None
+
+    monkeypatch.setattr("tirzah.db.memory_store.as_memory_store", lambda _db: FakeStore())
+    assert "error" in mcp_handlers.build_handlers(db=object())["read_memory"](node_id=node_id)
+    monkeypatch.setattr(mcp_handlers, "_default_db", lambda: None)
+    assert "unavailable" in mcp_handlers.build_handlers()["read_memory"](node_id=node_id)["error"]

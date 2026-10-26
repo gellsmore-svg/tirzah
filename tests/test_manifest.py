@@ -10,7 +10,7 @@ def test_tirzah_manifest_is_conformant_and_built_from_contracts():
     assert validate_manifest(m) == []
     assert m.product == "tirzah"
     names = m.names()
-    assert {"ask", "coherence_check", "semantic_annotate", "capabilities"} <= set(names)
+    assert {"ask", "read_memory", "coherence_check", "semantic_annotate", "capabilities"} <= set(names)
 
     # the specialist capability's schema is built from the live contract enum
     from tirzah.coherence import REQUEST_FIELDS, SPECIALIST_MODES, TERMINAL_REASONS
@@ -90,6 +90,7 @@ def test_capabilities_endpoint_full_and_mcp():
     mcp = client.get("/api/capabilities", params={"format": "mcp"}).json()
     tool_names = [t["name"] for t in mcp["tools"]]
     assert "ask" in tool_names
+    assert "read_memory" in tool_names
     # resources are not MCP tools
     assert "capabilities" not in tool_names
     # every MCP tool has the required shape
