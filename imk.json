@@ -1,0 +1,7 @@
+{
+  "metamodel": "iomr-evolved",
+  "metamodelVersion": "2.0.0",
+  "model": "meta/iomr-model",
+  "sources": [],
+  "expect": []
+}

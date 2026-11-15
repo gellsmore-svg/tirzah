@@ -15,7 +15,7 @@ Mnemosyne/
     requirements-index.md
     architecture-decisions.md
     build-roadmap.md
-    open-questions.md
+    product-direction.md
     repo-plan.md
   src/
     mnemosyne/

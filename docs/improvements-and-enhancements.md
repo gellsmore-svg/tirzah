@@ -10,7 +10,7 @@ All proposals are evaluated against Tirzah's core principles (see `docs/consolid
 - Appropriate human review gates for endorsement and semantic relationships in the current phase.
 - Quality over premature optimization or automation.
 
-This document complements (and does not duplicate) the staged roadmap in `docs/build-roadmap.md`, known gaps listed in the V1 reconciliation, the "Required next improvements" section of the consolidated requirements, `docs/open-questions.md`, and `docs/development-plan.md`. Filed review artifacts in `docs/reviews/` are supporting evidence; actionable findings belong here, in known limitations, or in the consolidated design.
+This document complements (and does not duplicate) the staged roadmap in `docs/build-roadmap.md`, known gaps listed in the V1 reconciliation, the "Required next improvements" section of the consolidated requirements, `meta/open-questions.md`, and `docs/development-plan.md`. Filed review artifacts in `docs/reviews/` are supporting evidence; actionable findings belong here, in known limitations, or in the consolidated design.
 
 ## How to Use This Document
 - Items are grouped by functional area.
@@ -514,7 +514,7 @@ Mahlah Browse tab and richer force-directed layout.
 - Output should be reproducible bundles that can live in `tests/fixtures` or a new `evals/` area.
 
 **Priority:** Medium
-**Related:** roadmap Stage 3, open-questions.md (evaluation items), test suite.
+**Related:** roadmap Stage 3, meta/open-questions.md (evaluation items), test suite.
 
 ### 11.2 Expanded Deterministic Test Corpus and Regression Fixtures
 **Description:** Grow the V1 smoke fixture into a small but representative set of documents that exercise tree shape, labels, semantic candidates, active documents, and retrieval edge cases. Use it for golden-context regression tests.
