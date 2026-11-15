@@ -1,0 +1,17 @@
+{
+  "name": "iomr-evolved",
+  "version": "2.0.0",
+  "chain": ["Intent", "Outcome", "Model", "Requirement"],
+  "types": ["Intent", "Outcome", "Model", "Requirement", "Actor", "System", "Policy", "Decision", "Project"],
+  "relationships": {
+    "delivers": "Outcome -> Intent",
+    "serves": "Model -> Outcome",
+    "specifies": "Requirement -> Model",
+    "refines": "same type -> same type",
+    "involves": "Model -> Actor or System",
+    "constrains": "Policy, Decision, or Requirement -> any record",
+    "depends_on": "context",
+    "supersedes": "same type -> same type",
+    "belongs_to": "context"
+  }
+}

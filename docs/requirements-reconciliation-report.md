@@ -38,7 +38,7 @@ Authoritative / project requirement sources:
 - `docs/architecture-decisions.md`
 - `docs/project-brief.md`
 - `docs/build-roadmap.md`
-- `docs/open-questions.md`
+- `meta/open-questions.md`
 - `docs/source-documents.md`
 
 Implementation files reviewed:
