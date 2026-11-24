@@ -4,6 +4,14 @@
 
 **Scope:** the first TIRZAH consumer graph in PR #82 and any recovery from an invalid initial baseline. SCL defines the metamodel and language; TIRZAH owns its IOMR data. This policy is a separately reviewable precondition for bootstrapping TIRZAH; routine model changes after activation follow SCL's normal proposal API.
 
+**Non-negotiable first-activation condition:** an independently established human trust root and its custody/revocation policy must already exist outside TIRZAH's Git repository, IOMR graph and database. Neither a candidate model nor its Git merge can supply or waive that authority. If this precondition is unmet, the candidate remains non-authoritative; no signed approval or activation is valid.
+
+## Out-of-band initial trust root — mandatory precondition
+
+Before **any** TIRZAH bootstrap validator/activation service can grant authority, a designated human operator must establish and document, **outside the Git repository, candidate graph and TIRZAH database**, (a) which human identity or identities may approve, replace and retract a baseline, (b) their independently verified public signing keys and signature policy, (c) the initial trust-root version and key-revocation/rotation procedure, and (d) the independently administered authority-checkpoint location. The private signing keys must remain outside the repository and TIRZAH database. The verifier is provisioned with that trust root by an operator-controlled channel; it must not accept a root advertised by the candidate.
+
+For alpha, the simplest proposed arrangement is an operator-provisioned, access-controlled local configuration outside the checkout and database, identifying a human-controlled signing key and approved roles. Its creation and custody are a **manual prerequisite**, not a deferred acceptance test or a claim that TIRZAH already provisions it. Human identity-to-key binding, safe rotation and recovery of the external checkpoint require documented out-of-band authority before activation. In the absence of a valid root or checkpoint, the baseline remains non-authoritative.
+
 ## Governing invariants
 
 1. **Authority is external to the candidate graph.** Neither a proposed IOMR record, a Markdown statement, a Git commit, nor a PR merge can grant itself authoritative status.
@@ -23,12 +31,6 @@
 - **Lifecycle event:** event ID, baseline ID/digest, event type, actor, verified authority, time, reason, previous state, next state, predecessor/successor references where applicable, and immutable audit reference.
 - **Authority pointer:** the sole current active baseline ID/digest, or null, with a monotonically increasing generation/version, stored in the restricted MongoDB `iomr_baseline_authority` singleton outside the consumer IOMR graph. Atomic compare-and-swap must update this pointer and durably record the linked event in the same database transaction, or fail without any authority change.
 - **Independent checkpoint:** an operator-controlled, authenticated record of the latest accepted authority generation and event-chain digest, stored **outside Git and outside the TIRZAH MongoDB instance**. On start and before every governed operation, verification detects disagreement or rollback and fails closed. Checkpoint publication must be crash-consistent with authority transitions; unresolved partial commits must fail closed until authorised reconciliation, not guess a winner.
-
-## Out-of-band initial trust root — mandatory precondition
-
-Before **any** TIRZAH bootstrap validator/activation service can grant authority, a designated human operator must establish and document, **outside the Git repository, candidate graph and TIRZAH database**, (a) which human identity or identities may approve, replace and retract a baseline, (b) their independently verified public signing keys and signature policy, (c) the initial trust-root version and key-revocation/rotation procedure, and (d) the independently administered authority-checkpoint location. The private signing keys must remain outside the repository and TIRZAH database. The verifier is provisioned with that trust root by an operator-controlled channel; it must not accept a root advertised by the candidate.
-
-For alpha, the simplest proposed arrangement is an operator-provisioned, access-controlled local configuration outside the checkout and database, identifying a human-controlled signing key and approved roles. Its creation and custody are a **manual prerequisite**, not a deferred acceptance test or a claim that TIRZAH already provisions it. Human identity-to-key binding, safe rotation and recovery of the external checkpoint require documented out-of-band authority before activation. In the absence of a valid root or checkpoint, the baseline remains non-authoritative.
 
 ## Authority storage and rollback boundary
 
