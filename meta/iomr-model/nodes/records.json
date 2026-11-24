@@ -1,0 +1,1077 @@
+[
+  {
+    "id": "project-tirzah",
+    "type": "Project",
+    "name": "TIRZAH",
+    "description": "Local-first, provenance-aware memory system and governed evidence service for human and agent clients.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "brief:docs/project-brief.md#Purpose"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "intent-preserve-source-memory",
+    "type": "Intent",
+    "name": "Preserve trustworthy memory",
+    "description": "Keep local source material and its provenance inspectable through ingestion, change and reuse.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "brief:docs/project-brief.md#Purpose"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "intent-augment-reasoning",
+    "type": "Intent",
+    "name": "Augment reasoning with bounded context",
+    "description": "Enable human and AI clients to find relevant, structured, attributable evidence without loading entire corpora.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "brief:docs/project-brief.md#Purpose"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "intent-govern-memory",
+    "type": "Intent",
+    "name": "Govern memory across users and time",
+    "description": "Keep memory access, authority, lifecycle and capabilities controllable as clients and corpora evolve.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Governance And Identity Requirements"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "outcome-source-fidelity",
+    "type": "Outcome",
+    "name": "Attributable source material",
+    "description": "Ingested text and its source metadata are reproducible and attributable.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Source Authority"
+      ],
+      "evaluation": "mixed",
+      "measurement": "check",
+      "measure": "A representative ingestion round-trip preserves exact source text and records its origin and checksum."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "outcome-continuous-evidence",
+    "type": "Outcome",
+    "name": "Evidence survives rebuilding",
+    "description": "Evidence references retain their meaning across source updates and index rebuilds.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-01"
+      ],
+      "evaluation": "mixed",
+      "measurement": "check",
+      "measure": "Rebuild tests never resolve a pinned reference to different canonical text; stale or deleted evidence yields an explicit typed result."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "outcome-relevant-context",
+    "type": "Outcome",
+    "name": "Relevant bounded retrieval",
+    "description": "Questions receive eligible relevant information within declared resource budgets.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Agentic Retrieval"
+      ],
+      "evaluation": "mixed",
+      "measurement": "check",
+      "measure": "Filter and budget tests return only eligible hits; diagnostics distinguish no matches from degraded retrieval."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "outcome-verifiable-answers",
+    "type": "Outcome",
+    "name": "Verifiable agent evidence",
+    "description": "Agents can navigate and read complete source evidence associated with their answers.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Context Construction"
+      ],
+      "evaluation": "mixed",
+      "measurement": "check",
+      "measure": "An agent reconstructs a long source exactly, follows bounded graph neighbours and cites a stable source revision."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "outcome-inspectable-processing",
+    "type": "Outcome",
+    "name": "Inspectable process",
+    "description": "Operators can inspect how a question was interpreted, retrieved and passed to a model.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Prompt Processing Pipeline"
+      ],
+      "evaluation": "mixed",
+      "measurement": "check",
+      "measure": "A completed request identifies selected context, adapter/model, tool actions and failure/omission facts in a human-readable trace."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "outcome-scoped-eligibility",
+    "type": "Outcome",
+    "name": "Scoped evidence access",
+    "description": "Every outward retrieval operation respects authenticated scope and lifecycle eligibility.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ],
+      "evaluation": "mixed",
+      "measurement": "check",
+      "measure": "Cross-scope search, node-ID, document and graph reads all deny ineligible evidence without existence leaks."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "outcome-accountable-history",
+    "type": "Outcome",
+    "name": "Accountable historical access",
+    "description": "Superseded evidence is independently governed, and privileged inspection and deletion are attributable.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ],
+      "evaluation": "mixed",
+      "measurement": "check",
+      "measure": "Historical access and deletion tests verify distinct grants, complete audit records and fail-closed behaviour."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "outcome-agent-compatibility",
+    "type": "Outcome",
+    "name": "Compatible agent interfaces",
+    "description": "Clients discover compatible retrieval capabilities and identify incompatible evidence formats safely.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-02"
+      ],
+      "evaluation": "mixed",
+      "measurement": "check",
+      "measure": "Mixed-version agents reject unsupported formats and filters with typed errors, without silently relaxing scope."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "outcome-local-operability",
+    "type": "Outcome",
+    "name": "Locally operable memory",
+    "description": "Local ingestion, retrieval, inspection and recovery remain usable and testable through supported interfaces.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "readme:README.md#Know before you rely on it"
+      ],
+      "evaluation": "mixed",
+      "measurement": "check",
+      "measure": "Documented Docker/CLI smoke tests and real-Mongo validation pass in a supported local deployment."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "actor-local-operator",
+    "type": "Actor",
+    "name": "Local operator",
+    "description": "Human who ingests, inspects, reviews and operates the local corpus.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "brief:docs/project-brief.md#Purpose"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "actor-privileged-auditor",
+    "type": "Actor",
+    "name": "Privileged auditor",
+    "description": "Authenticated human or authorised principal permitted to inspect retained restricted history.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "actor-agent-consumer",
+    "type": "Actor",
+    "name": "Agent consumer",
+    "description": "Client agent that requests memory capabilities and consumes evidence references.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-02"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "system-ingestion",
+    "type": "System",
+    "name": "Ingestion pipeline",
+    "description": "Loads and transforms source material into provenance-aware memory nodes.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Current Ingestion"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "system-store",
+    "type": "System",
+    "name": "Memory store",
+    "description": "Persistence boundary for document, revision, node, tree and graph data.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "modules:docs/code-module-boundaries.md#Boundary Rule"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "system-query",
+    "type": "System",
+    "name": "Retrieval service",
+    "description": "Filtered lexical, semantic, graph and context-building operations.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Agentic Retrieval"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "system-agent-adapter",
+    "type": "System",
+    "name": "Agent-facing adapter",
+    "description": "MCP/tool surface translating bounded typed requests to retrieval services.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "modules:docs/code-module-boundaries.md#UI Adapter"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "system-answer-runtime",
+    "type": "System",
+    "name": "Answer runtime",
+    "description": "Orchestrates request interpretation, context assembly and response traces.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Prompt Processing Pipeline"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "system-model-adapter",
+    "type": "System",
+    "name": "Model adapter",
+    "description": "Executes local or explicitly permitted model invocations.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "modules:docs/code-module-boundaries.md#Boundary Rule"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "system-policy",
+    "type": "System",
+    "name": "Authorization gate",
+    "description": "Server-side authentication, scope resolution and evidence eligibility checks.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "system-audit",
+    "type": "System",
+    "name": "Audit service",
+    "description": "Persisted, attributable inspection and retention/deletion event mechanism.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "system-keturah",
+    "type": "System",
+    "name": "Keturah capability registry",
+    "description": "External capability manifest, discovery and MCP projection system.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-02"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "system-local-ui",
+    "type": "System",
+    "name": "Local UI and CLI",
+    "description": "Human-facing operator interface and developer commands.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Ask Workspace"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "system-test-harness",
+    "type": "System",
+    "name": "Conformance harness",
+    "description": "Controlled and real-Mongo tests that verify evidence and adapter contracts.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "limits:docs/v1-known-limitations.md#Retrieval Quality"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "model-ingest",
+    "type": "Model",
+    "name": "Ingest and preserve sources",
+    "description": "Load source data, preserve origin, segment deterministically and persist attributable memory.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Current Ingestion"
+      ]
+    },
+    "status": "proposed",
+    "interaction": [
+      "system-system"
+    ]
+  },
+  {
+    "id": "model-revisions",
+    "type": "Model",
+    "name": "Re-ingest and preserve revisions",
+    "description": "Associate logical source identity with immutable evidence revisions, recording rebuild lifecycle.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-01"
+      ]
+    },
+    "status": "proposed",
+    "interaction": [
+      "system-system"
+    ]
+  },
+  {
+    "id": "model-search",
+    "type": "Model",
+    "name": "Query eligible memory",
+    "description": "Validate bounded query fields, resolve eligible candidates and rank within the permitted pool.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Agentic Retrieval"
+      ]
+    },
+    "status": "proposed",
+    "interaction": [
+      "system-system"
+    ]
+  },
+  {
+    "id": "model-evidence-read",
+    "type": "Model",
+    "name": "Read exact evidence",
+    "description": "Resolve pinned source/revision/span and return lossless bounded pages with continuation.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-01"
+      ]
+    },
+    "status": "proposed",
+    "interaction": [
+      "system-system"
+    ]
+  },
+  {
+    "id": "model-navigation",
+    "type": "Model",
+    "name": "Explore hierarchy and graph",
+    "description": "Traverse memory relationships and document context with fixed eligibility and budgets.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Graph Model"
+      ]
+    },
+    "status": "proposed",
+    "interaction": [
+      "system-system"
+    ]
+  },
+  {
+    "id": "model-answer",
+    "type": "Model",
+    "name": "Explain context selection and answer",
+    "description": "Interpret a request, construct context, execute a permitted model and record the trace.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Prompt Processing Pipeline"
+      ]
+    },
+    "status": "proposed",
+    "interaction": [
+      "system-system"
+    ]
+  },
+  {
+    "id": "model-access",
+    "type": "Model",
+    "name": "Authorize every evidence path",
+    "description": "Resolve caller identity and effective scope separately from ranking preferences.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ]
+    },
+    "status": "proposed",
+    "interaction": [
+      "system-system"
+    ]
+  },
+  {
+    "id": "model-historical",
+    "type": "Model",
+    "name": "Inspect and expire retained evidence",
+    "description": "Use explicitly elevated review paths and attributable retention/deletion authority.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ]
+    },
+    "status": "proposed",
+    "interaction": [
+      "human-system"
+    ]
+  },
+  {
+    "id": "model-capabilities",
+    "type": "Model",
+    "name": "Negotiate agent tool contracts",
+    "description": "Advertise and negotiate compatible capability groups and exact tool contracts.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-02"
+      ]
+    },
+    "status": "proposed",
+    "interaction": [
+      "system-system"
+    ]
+  },
+  {
+    "id": "model-local-operation",
+    "type": "Model",
+    "name": "Operate local memory",
+    "description": "Allow an operator to inspect, ingest, review and recover local memory.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Ask Workspace"
+      ]
+    },
+    "status": "proposed",
+    "interaction": [
+      "human-system"
+    ]
+  },
+  {
+    "id": "model-conformance",
+    "type": "Model",
+    "name": "Verify retrieval contracts",
+    "description": "Exercise stable source reads, authorization, mixed clients and recovery on actual storage.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "limits:docs/v1-known-limitations.md#Retrieval Quality"
+      ]
+    },
+    "status": "proposed",
+    "interaction": [
+      "system-system"
+    ]
+  },
+  {
+    "id": "requirement-tirzah-01",
+    "type": "Requirement",
+    "name": "Preserve raw source truth",
+    "description": "TIRZAH SHALL store verifiable original content and attributable origin and checksum metadata without silently replacing it with a summary.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Source Authority"
+      ],
+      "category": "integrity",
+      "acceptance": "When a source is ingested, exact stored source text and checksum match the original input and provenance is retrievable."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-02",
+    "type": "Requirement",
+    "name": "Separate source and derived material",
+    "description": "TIRZAH SHALL distinguish original text, parser output and AI-derived summaries or graph assertions, with provenance for each.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Current Ingestion"
+      ],
+      "category": "provenance",
+      "acceptance": "When a generated summary is present, an evidence response can distinguish it from the original source and link it to its inputs."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-03",
+    "type": "Requirement",
+    "name": "Record chronology separately",
+    "description": "TIRZAH SHALL store source origin-date evidence separately from ingestion and node creation times.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Repository Refresh"
+      ],
+      "category": "temporal",
+      "acceptance": "Given a source authored before ingestion, origin chronology and ingestion chronology are independently retrievable and filtered."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-04",
+    "type": "Requirement",
+    "name": "Mint stable logical source IDs",
+    "description": "TIRZAH SHALL mint one opaque logical source identity and use an explicit association rule for rename, updates and path replacement.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-01"
+      ],
+      "category": "integrity",
+      "acceptance": "A rename preserves source ID, a deliberate update creates a revision, and unrelated same-path replacement is not silently associated."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-05",
+    "type": "Requirement",
+    "name": "Freeze revision content and map",
+    "description": "TIRZAH SHALL retain immutable canonical text, transformation fingerprint, revision ID and node-span map while that revision is retained.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-01"
+      ],
+      "category": "integrity",
+      "acceptance": "Given identical inputs and transformation, repeated runs yield the same fingerprint and spans; changing parser output does not modify earlier revisions."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-06",
+    "type": "Requirement",
+    "name": "Reject stale evidence resolution",
+    "description": "TIRZAH SHALL pin references to source identity, immutable revision and exact offset unit, and never silently redirect old references to latest text.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-01"
+      ],
+      "category": "integrity",
+      "acceptance": "After a rebuild, a pinned read reconstructs original evidence or returns typed stale/not-retained or denied; no substituted text."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-07",
+    "type": "Requirement",
+    "name": "Expose typed bounded filters",
+    "description": "TIRZAH SHALL offer typed lexical, vector or hybrid query controls and supported document, label, endorsement and date filters without exposing a free-form database DSL.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Agentic Retrieval"
+      ],
+      "category": "functional",
+      "acceptance": "Unknown filters are rejected with typed errors; supported filters are applied consistently to all advertised retrieval modes."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-08",
+    "type": "Requirement",
+    "name": "Resolve eligibility before ranking",
+    "description": "TIRZAH SHALL filter authorised eligible documents prior to lexical, vector, hybrid or trust-based rank scoring and result truncation.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ],
+      "category": "security",
+      "acceptance": "A higher-scoring out-of-scope hit is absent in each retrieval mode even if its endorsement or trust value is maximal."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-09",
+    "type": "Requirement",
+    "name": "Provide deterministic cursors",
+    "description": "TIRZAH SHALL bind page tokens to scope, query, ordering and corpus snapshot, with explicit invalidation after incompatible changes.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-02"
+      ],
+      "category": "functional",
+      "acceptance": "A modified snapshot or scope causes a typed stale-cursor error rather than mixing results or widening scope."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-10",
+    "type": "Requirement",
+    "name": "Report search degradation",
+    "description": "TIRZAH SHALL return structured diagnostics for unavailable semantic adapters, time budgets, omissions and true empty result sets.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "limits:docs/v1-known-limitations.md#Retrieval Quality"
+      ],
+      "category": "reliability",
+      "acceptance": "An unavailable semantic adapter produces a typed degraded/unsupported result, not a false semantic zero-result success."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-11",
+    "type": "Requirement",
+    "name": "Read verbatim source pages",
+    "description": "TIRZAH SHALL return bounded exact canonical source slices with source ID, revision ID, offset unit, has_more and continuation.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-01"
+      ],
+      "category": "functional",
+      "acceptance": "An agent concatenates pages of over 16,000 characters, preserving whitespace and Unicode exactly."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-12",
+    "type": "Requirement",
+    "name": "Carry source provenance",
+    "description": "TIRZAH SHALL attach immutable source and revision identity, origin, content hash and distinction between cited source and interpretation to each read.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-01"
+      ],
+      "category": "provenance",
+      "acceptance": "A search result provides sufficient fields to read and cite the same source span without another fuzzy lookup."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-13",
+    "type": "Requirement",
+    "name": "Validate read authorization",
+    "description": "TIRZAH SHALL independently authorize direct node, source and revision reads even if callers supply previously seen identifiers.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ],
+      "category": "security",
+      "acceptance": "A caller given a restricted node ID cannot retrieve its text or infer its existence through direct read."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-14",
+    "type": "Requirement",
+    "name": "Bound graph exploration",
+    "description": "TIRZAH SHALL enforce per-hop, depth, branching and total-result caps, with typed edge and direction filters.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Graph Model"
+      ],
+      "category": "functional",
+      "acceptance": "Traversing a cyclic graph terminates within declared caps and reports omitted/limited results."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-15",
+    "type": "Requirement",
+    "name": "Exclude restricted graph neighbours",
+    "description": "TIRZAH SHALL apply authorization at every traversal expansion and return no restricted neighbours or existence leaks.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ],
+      "category": "security",
+      "acceptance": "When a graph edge enters a restricted domain, the result omits forbidden node and edge details and reveals no sensitive metadata."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-16",
+    "type": "Requirement",
+    "name": "Build source-bound context",
+    "description": "TIRZAH SHALL construct context packages with citations and budget limits, keeping generated interpretations subordinate to source.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Context Construction"
+      ],
+      "category": "functional",
+      "acceptance": "A question needing several documents returns source-specific provenance and indicates omitted or insufficient evidence."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-17",
+    "type": "Requirement",
+    "name": "Expose human-readable execution trace",
+    "description": "TIRZAH SHALL record retrieval choices, query steps, used context, adapter/model handoffs and substantive failures.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Prompt Processing Pipeline"
+      ],
+      "category": "observability",
+      "acceptance": "After a request, an operator can inspect a readable log identifying source selections and the answer model."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-18",
+    "type": "Requirement",
+    "name": "Authenticate identity and corpus scope",
+    "description": "TIRZAH SHALL resolve actual caller identity and effective authorized corpus scope server-side before any evidence retrieval.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ],
+      "category": "security",
+      "acceptance": "A forged identity or trust parameter never changes the server-resolved accessible corpus."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-19",
+    "type": "Requirement",
+    "name": "Keep endorsement separate from authorization",
+    "description": "TIRZAH SHALL use trust and endorsement only for ranking within the permitted evidence pool, never for access rights.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ],
+      "category": "security",
+      "acceptance": "A high endorsement value cannot make an otherwise unauthorized memory eligible in any adapter."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-20",
+    "type": "Requirement",
+    "name": "Protect every outward endpoint",
+    "description": "TIRZAH SHALL apply eligibility checks to search, list, read, graph and historical paths regardless of discovery metadata.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ],
+      "category": "security",
+      "acceptance": "Direct-ID, alternate adapter and cross-domain requests all fail closed without authorization bypass."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-21",
+    "type": "Requirement",
+    "name": "Distinguish evidence lifecycle states",
+    "description": "TIRZAH SHALL hold supersession and approval status separately from immutable evidence, with explicit authority to inspect each state.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ],
+      "category": "governance",
+      "acceptance": "Superseded evidence is excluded from ordinary retrieval; permission to inspect it does not grant rejected/pending access."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-22",
+    "type": "Requirement",
+    "name": "Audit privileged disclosure",
+    "description": "TIRZAH SHALL write an attributable actor, scope, reason, target revision and outcome audit record for every privileged inspection; fail closed on mandatory audit failure.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ],
+      "category": "audit",
+      "acceptance": "Simulated audit-store outage prevents privileged disclosure and the event is not falsely reported as recorded."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-23",
+    "type": "Requirement",
+    "name": "Authorize retention deletion independently",
+    "description": "TIRZAH SHALL require separately attributable authority and an auditable event for expiry or deletion, without implying indefinite retention.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ],
+      "category": "governance",
+      "acceptance": "An unauthorized deletion request fails; authorized deletion records policy/actor/reason and subsequently prevents disclosure of expired content."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-24",
+    "type": "Requirement",
+    "name": "Advertise versioned capability groups",
+    "description": "TIRZAH SHALL publish supported search, read, graph and historical interaction-group versions through Keturah-compatible manifests.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-02"
+      ],
+      "category": "integration",
+      "acceptance": "An agent can discover which mutually compatible capability group versions can safely be used in a session."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-25",
+    "type": "Requirement",
+    "name": "Verify individual tool contracts",
+    "description": "TIRZAH SHALL expose an exact schema/semantic fingerprint for each tool and reject unsupported contract uses explicitly.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-02"
+      ],
+      "category": "integration",
+      "acceptance": "An agent whose requested tool fingerprint is unsupported receives typed incompatibility, not silent field omission."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-26",
+    "type": "Requirement",
+    "name": "Carry evidence compatibility metadata",
+    "description": "TIRZAH SHALL embed evidence-format and minimum required capabilities in immutable references so mixed-version consumers detect mismatches.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-02"
+      ],
+      "category": "integration",
+      "acceptance": "Agent B consuming an Agent A reference either resolves it with compatible semantics or returns a typed incompatibility error."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-27",
+    "type": "Requirement",
+    "name": "Remain operable locally",
+    "description": "TIRZAH SHALL support locally bounded ingestion, queries and inspection without making remote hosting mandatory.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "readme:README.md#Know before you rely on it"
+      ],
+      "category": "operational",
+      "acceptance": "A documented local Docker/CLI workflow ingests a source and retrieves inspectable context without requiring cloud services."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-28",
+    "type": "Requirement",
+    "name": "Preserve backward compatible interfaces",
+    "description": "TIRZAH SHALL provide a documented additive transition for existing CLI, MCP and local operator consumers.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "readme:README.md#Know before you rely on it"
+      ],
+      "category": "integration",
+      "acceptance": "Existing search-memory clients continue working or receive an explicit versioned migration path with contract tests."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-29",
+    "type": "Requirement",
+    "name": "Test with real Mongo and rebuilds",
+    "description": "TIRZAH SHALL verify lifecycle, exact evidence, history, audit, graph bounds and authorization using real Mongo alongside unit tests.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "limits:docs/v1-known-limitations.md#Retrieval Quality"
+      ],
+      "category": "quality",
+      "acceptance": "Real-Mongo test matrix covers full and diff rebuild, direct-ID bypass, historical audit failure and multi-page reconstruction."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "requirement-tirzah-30",
+    "type": "Requirement",
+    "name": "Block insecure network exposure",
+    "description": "TIRZAH SHALL treat authenticated scope enforcement and operator-API security issue 18 as deployment prerequisites, not advisory flags.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "readme:README.md#Know before you rely on it"
+      ],
+      "category": "security",
+      "acceptance": "Deployment conformance fails when an unauthenticated operator endpoint or insecure externally exposed memory API is enabled."
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "decision-u01-revision-pinning",
+    "type": "Decision",
+    "name": "Immutable evidence identities",
+    "description": "Stable source identity, independently minted immutable revisions and pinned offsets are required for exact evidence.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-01"
+      ],
+      "decisionStatus": "agreed-in-principle",
+      "reviewLink": "https://github.com/gellsmore-svg/tirzah/issues/81#issuecomment-7147242134"
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "decision-u02-keturah-contracts",
+    "type": "Decision",
+    "name": "Versioned agent compatibility",
+    "description": "Use Keturah capability groups and exact tool contracts; references express format prerequisites; discovery never authorizes access.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-02"
+      ],
+      "decisionStatus": "agreed-in-principle",
+      "reviewLink": "https://github.com/gellsmore-svg/tirzah/issues/81#issuecomment-7147242134"
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "decision-u03-audited-history",
+    "type": "Decision",
+    "name": "Governed historical disclosure and deletion",
+    "description": "Separate immutable evidence, mutable lifecycle, privileged inspection authority and attributable expiry/deletion authority.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ],
+      "decisionStatus": "agreed-in-principle",
+      "reviewLink": "https://github.com/gellsmore-svg/tirzah/issues/81#issuecomment-7147242134"
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "policy-source-authority",
+    "type": "Policy",
+    "name": "Source truth outranks summary",
+    "description": "Original source and provenance shall remain distinguishable from all model-generated interpretations.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "requirements:docs/consolidated-requirements-and-design.md#Source Authority"
+      ]
+    },
+    "status": "proposed"
+  },
+  {
+    "id": "policy-eligibility-first",
+    "type": "Policy",
+    "name": "Eligibility precedes scoring",
+    "description": "Authorization and status gating must run separately from trust and endorsement ranking.",
+    "metadata": {
+      "basis": "derived",
+      "evidence": [
+        "review:docs/iomr-alpha/review-baseline.md#U-03"
+      ]
+    },
+    "status": "proposed"
+  }
+]
