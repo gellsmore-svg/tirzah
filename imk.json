@@ -1,0 +1,51 @@
+{
+  "metamodel": "iomr-evolved",
+  "metamodelVersion": "2.0.0",
+  "model": "meta/iomr-model",
+  "sources": [
+    {
+      "alias": "readme",
+      "path": "README.md",
+      "ref": "github:gellsmore-svg/tirzah@92eb70d2a91bbeed3cfcc56a772c19ed6b0993ad"
+    },
+    {
+      "alias": "brief",
+      "path": "docs/project-brief.md",
+      "ref": "github:gellsmore-svg/tirzah@92eb70d2a91bbeed3cfcc56a772c19ed6b0993ad"
+    },
+    {
+      "alias": "requirements",
+      "path": "docs/consolidated-requirements-and-design.md",
+      "ref": "github:gellsmore-svg/tirzah@92eb70d2a91bbeed3cfcc56a772c19ed6b0993ad"
+    },
+    {
+      "alias": "modules",
+      "path": "docs/code-module-boundaries.md",
+      "ref": "github:gellsmore-svg/tirzah@92eb70d2a91bbeed3cfcc56a772c19ed6b0993ad"
+    },
+    {
+      "alias": "decisions",
+      "path": "docs/architecture-decisions.md",
+      "ref": "github:gellsmore-svg/tirzah@92eb70d2a91bbeed3cfcc56a772c19ed6b0993ad"
+    },
+    {
+      "alias": "limits",
+      "path": "docs/v1-known-limitations.md",
+      "ref": "github:gellsmore-svg/tirzah@92eb70d2a91bbeed3cfcc56a772c19ed6b0993ad"
+    },
+    {
+      "alias": "review",
+      "path": "docs/iomr-alpha/review-baseline.md",
+      "ref": "https://github.com/gellsmore-svg/tirzah/issues/81#issuecomment-7147242134"
+    }
+  ],
+  "expect": [
+    "project-tirzah",
+    "intent-preserve-source-memory",
+    "intent-augment-reasoning",
+    "intent-govern-memory",
+    "decision-u01-revision-pinning",
+    "decision-u02-keturah-contracts",
+    "decision-u03-audited-history"
+  ]
+}
