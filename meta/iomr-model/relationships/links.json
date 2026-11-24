@@ -1,0 +1,751 @@
+[
+  {
+    "id": "intent-preserve-source-memory-belongs_to-project-tirzah",
+    "type": "belongs_to",
+    "from": "intent-preserve-source-memory",
+    "to": "project-tirzah",
+    "rationale": "This intent belongs to the TIRZAH product and its documented local-memory purpose."
+  },
+  {
+    "id": "intent-augment-reasoning-belongs_to-project-tirzah",
+    "type": "belongs_to",
+    "from": "intent-augment-reasoning",
+    "to": "project-tirzah",
+    "rationale": "This intent belongs to the TIRZAH product and its documented local-memory purpose."
+  },
+  {
+    "id": "intent-govern-memory-belongs_to-project-tirzah",
+    "type": "belongs_to",
+    "from": "intent-govern-memory",
+    "to": "project-tirzah",
+    "rationale": "This intent belongs to the TIRZAH product and its documented local-memory purpose."
+  },
+  {
+    "id": "outcome-source-fidelity-delivers-intent-preserve-source-memory",
+    "type": "delivers",
+    "from": "outcome-source-fidelity",
+    "to": "intent-preserve-source-memory",
+    "rationale": "The measurable outcome outcome-source-fidelity realises the purpose expressed by intent-preserve-source-memory."
+  },
+  {
+    "id": "outcome-continuous-evidence-delivers-intent-preserve-source-memory",
+    "type": "delivers",
+    "from": "outcome-continuous-evidence",
+    "to": "intent-preserve-source-memory",
+    "rationale": "The measurable outcome outcome-continuous-evidence realises the purpose expressed by intent-preserve-source-memory."
+  },
+  {
+    "id": "outcome-relevant-context-delivers-intent-augment-reasoning",
+    "type": "delivers",
+    "from": "outcome-relevant-context",
+    "to": "intent-augment-reasoning",
+    "rationale": "The measurable outcome outcome-relevant-context realises the purpose expressed by intent-augment-reasoning."
+  },
+  {
+    "id": "outcome-verifiable-answers-delivers-intent-augment-reasoning",
+    "type": "delivers",
+    "from": "outcome-verifiable-answers",
+    "to": "intent-augment-reasoning",
+    "rationale": "The measurable outcome outcome-verifiable-answers realises the purpose expressed by intent-augment-reasoning."
+  },
+  {
+    "id": "outcome-inspectable-processing-delivers-intent-augment-reasoning",
+    "type": "delivers",
+    "from": "outcome-inspectable-processing",
+    "to": "intent-augment-reasoning",
+    "rationale": "The measurable outcome outcome-inspectable-processing realises the purpose expressed by intent-augment-reasoning."
+  },
+  {
+    "id": "outcome-scoped-eligibility-delivers-intent-govern-memory",
+    "type": "delivers",
+    "from": "outcome-scoped-eligibility",
+    "to": "intent-govern-memory",
+    "rationale": "The measurable outcome outcome-scoped-eligibility realises the purpose expressed by intent-govern-memory."
+  },
+  {
+    "id": "outcome-accountable-history-delivers-intent-govern-memory",
+    "type": "delivers",
+    "from": "outcome-accountable-history",
+    "to": "intent-govern-memory",
+    "rationale": "The measurable outcome outcome-accountable-history realises the purpose expressed by intent-govern-memory."
+  },
+  {
+    "id": "outcome-agent-compatibility-delivers-intent-govern-memory",
+    "type": "delivers",
+    "from": "outcome-agent-compatibility",
+    "to": "intent-govern-memory",
+    "rationale": "The measurable outcome outcome-agent-compatibility realises the purpose expressed by intent-govern-memory."
+  },
+  {
+    "id": "outcome-local-operability-delivers-intent-govern-memory",
+    "type": "delivers",
+    "from": "outcome-local-operability",
+    "to": "intent-govern-memory",
+    "rationale": "The measurable outcome outcome-local-operability realises the purpose expressed by intent-govern-memory."
+  },
+  {
+    "id": "model-ingest-serves-outcome-source-fidelity",
+    "type": "serves",
+    "from": "model-ingest",
+    "to": "outcome-source-fidelity",
+    "rationale": "The ingest and preserve sources interaction directly produces the measurable outcome outcome-source-fidelity."
+  },
+  {
+    "id": "model-ingest-involves-system-ingestion",
+    "type": "involves",
+    "from": "model-ingest",
+    "to": "system-ingestion",
+    "rationale": "The system-ingestion participant is involved in the ingest and preserve sources interaction."
+  },
+  {
+    "id": "model-ingest-involves-system-store",
+    "type": "involves",
+    "from": "model-ingest",
+    "to": "system-store",
+    "rationale": "The system-store participant is involved in the ingest and preserve sources interaction."
+  },
+  {
+    "id": "model-revisions-serves-outcome-continuous-evidence",
+    "type": "serves",
+    "from": "model-revisions",
+    "to": "outcome-continuous-evidence",
+    "rationale": "The re-ingest and preserve revisions interaction directly produces the measurable outcome outcome-continuous-evidence."
+  },
+  {
+    "id": "model-revisions-involves-system-ingestion",
+    "type": "involves",
+    "from": "model-revisions",
+    "to": "system-ingestion",
+    "rationale": "The system-ingestion participant is involved in the re-ingest and preserve revisions interaction."
+  },
+  {
+    "id": "model-revisions-involves-system-store",
+    "type": "involves",
+    "from": "model-revisions",
+    "to": "system-store",
+    "rationale": "The system-store participant is involved in the re-ingest and preserve revisions interaction."
+  },
+  {
+    "id": "model-search-serves-outcome-relevant-context",
+    "type": "serves",
+    "from": "model-search",
+    "to": "outcome-relevant-context",
+    "rationale": "The query eligible memory interaction directly produces the measurable outcome outcome-relevant-context."
+  },
+  {
+    "id": "model-search-involves-system-agent-adapter",
+    "type": "involves",
+    "from": "model-search",
+    "to": "system-agent-adapter",
+    "rationale": "The system-agent-adapter participant is involved in the query eligible memory interaction."
+  },
+  {
+    "id": "model-search-involves-system-query",
+    "type": "involves",
+    "from": "model-search",
+    "to": "system-query",
+    "rationale": "The system-query participant is involved in the query eligible memory interaction."
+  },
+  {
+    "id": "model-evidence-read-serves-outcome-verifiable-answers",
+    "type": "serves",
+    "from": "model-evidence-read",
+    "to": "outcome-verifiable-answers",
+    "rationale": "The read exact evidence interaction directly produces the measurable outcome outcome-verifiable-answers."
+  },
+  {
+    "id": "model-evidence-read-involves-system-agent-adapter",
+    "type": "involves",
+    "from": "model-evidence-read",
+    "to": "system-agent-adapter",
+    "rationale": "The system-agent-adapter participant is involved in the read exact evidence interaction."
+  },
+  {
+    "id": "model-evidence-read-involves-system-query",
+    "type": "involves",
+    "from": "model-evidence-read",
+    "to": "system-query",
+    "rationale": "The system-query participant is involved in the read exact evidence interaction."
+  },
+  {
+    "id": "model-navigation-serves-outcome-verifiable-answers",
+    "type": "serves",
+    "from": "model-navigation",
+    "to": "outcome-verifiable-answers",
+    "rationale": "The explore hierarchy and graph interaction directly produces the measurable outcome outcome-verifiable-answers."
+  },
+  {
+    "id": "model-navigation-involves-system-query",
+    "type": "involves",
+    "from": "model-navigation",
+    "to": "system-query",
+    "rationale": "The system-query participant is involved in the explore hierarchy and graph interaction."
+  },
+  {
+    "id": "model-navigation-involves-system-store",
+    "type": "involves",
+    "from": "model-navigation",
+    "to": "system-store",
+    "rationale": "The system-store participant is involved in the explore hierarchy and graph interaction."
+  },
+  {
+    "id": "model-answer-serves-outcome-inspectable-processing",
+    "type": "serves",
+    "from": "model-answer",
+    "to": "outcome-inspectable-processing",
+    "rationale": "The explain context selection and answer interaction directly produces the measurable outcome outcome-inspectable-processing."
+  },
+  {
+    "id": "model-answer-involves-system-answer-runtime",
+    "type": "involves",
+    "from": "model-answer",
+    "to": "system-answer-runtime",
+    "rationale": "The system-answer-runtime participant is involved in the explain context selection and answer interaction."
+  },
+  {
+    "id": "model-answer-involves-system-model-adapter",
+    "type": "involves",
+    "from": "model-answer",
+    "to": "system-model-adapter",
+    "rationale": "The system-model-adapter participant is involved in the explain context selection and answer interaction."
+  },
+  {
+    "id": "model-access-serves-outcome-scoped-eligibility",
+    "type": "serves",
+    "from": "model-access",
+    "to": "outcome-scoped-eligibility",
+    "rationale": "The authorize every evidence path interaction directly produces the measurable outcome outcome-scoped-eligibility."
+  },
+  {
+    "id": "model-access-involves-system-policy",
+    "type": "involves",
+    "from": "model-access",
+    "to": "system-policy",
+    "rationale": "The system-policy participant is involved in the authorize every evidence path interaction."
+  },
+  {
+    "id": "model-access-involves-system-query",
+    "type": "involves",
+    "from": "model-access",
+    "to": "system-query",
+    "rationale": "The system-query participant is involved in the authorize every evidence path interaction."
+  },
+  {
+    "id": "model-historical-serves-outcome-accountable-history",
+    "type": "serves",
+    "from": "model-historical",
+    "to": "outcome-accountable-history",
+    "rationale": "The inspect and expire retained evidence interaction directly produces the measurable outcome outcome-accountable-history."
+  },
+  {
+    "id": "model-historical-involves-actor-privileged-auditor",
+    "type": "involves",
+    "from": "model-historical",
+    "to": "actor-privileged-auditor",
+    "rationale": "The actor-privileged-auditor participant is involved in the inspect and expire retained evidence interaction."
+  },
+  {
+    "id": "model-historical-involves-system-audit",
+    "type": "involves",
+    "from": "model-historical",
+    "to": "system-audit",
+    "rationale": "The system-audit participant is involved in the inspect and expire retained evidence interaction."
+  },
+  {
+    "id": "model-capabilities-serves-outcome-agent-compatibility",
+    "type": "serves",
+    "from": "model-capabilities",
+    "to": "outcome-agent-compatibility",
+    "rationale": "The negotiate agent tool contracts interaction directly produces the measurable outcome outcome-agent-compatibility."
+  },
+  {
+    "id": "model-capabilities-involves-system-keturah",
+    "type": "involves",
+    "from": "model-capabilities",
+    "to": "system-keturah",
+    "rationale": "The system-keturah participant is involved in the negotiate agent tool contracts interaction."
+  },
+  {
+    "id": "model-capabilities-involves-system-agent-adapter",
+    "type": "involves",
+    "from": "model-capabilities",
+    "to": "system-agent-adapter",
+    "rationale": "The system-agent-adapter participant is involved in the negotiate agent tool contracts interaction."
+  },
+  {
+    "id": "model-local-operation-serves-outcome-local-operability",
+    "type": "serves",
+    "from": "model-local-operation",
+    "to": "outcome-local-operability",
+    "rationale": "The operate local memory interaction directly produces the measurable outcome outcome-local-operability."
+  },
+  {
+    "id": "model-local-operation-involves-actor-local-operator",
+    "type": "involves",
+    "from": "model-local-operation",
+    "to": "actor-local-operator",
+    "rationale": "The actor-local-operator participant is involved in the operate local memory interaction."
+  },
+  {
+    "id": "model-local-operation-involves-system-local-ui",
+    "type": "involves",
+    "from": "model-local-operation",
+    "to": "system-local-ui",
+    "rationale": "The system-local-ui participant is involved in the operate local memory interaction."
+  },
+  {
+    "id": "model-conformance-serves-outcome-local-operability",
+    "type": "serves",
+    "from": "model-conformance",
+    "to": "outcome-local-operability",
+    "rationale": "The verify retrieval contracts interaction directly produces the measurable outcome outcome-local-operability."
+  },
+  {
+    "id": "model-conformance-involves-system-test-harness",
+    "type": "involves",
+    "from": "model-conformance",
+    "to": "system-test-harness",
+    "rationale": "The system-test-harness participant is involved in the verify retrieval contracts interaction."
+  },
+  {
+    "id": "model-conformance-involves-system-store",
+    "type": "involves",
+    "from": "model-conformance",
+    "to": "system-store",
+    "rationale": "The system-store participant is involved in the verify retrieval contracts interaction."
+  },
+  {
+    "id": "model-search-involves-actor-agent-consumer",
+    "type": "involves",
+    "from": "model-search",
+    "to": "actor-agent-consumer",
+    "rationale": "An agent consumer initiates query calls through the agent-facing adapter and receives bounded results."
+  },
+  {
+    "id": "requirement-tirzah-01-specifies-model-ingest",
+    "type": "specifies",
+    "from": "requirement-tirzah-01",
+    "to": "model-ingest",
+    "rationale": "This requirement constrains the model-ingest interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-02-specifies-model-ingest",
+    "type": "specifies",
+    "from": "requirement-tirzah-02",
+    "to": "model-ingest",
+    "rationale": "This requirement constrains the model-ingest interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-03-specifies-model-ingest",
+    "type": "specifies",
+    "from": "requirement-tirzah-03",
+    "to": "model-ingest",
+    "rationale": "This requirement constrains the model-ingest interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-04-specifies-model-revisions",
+    "type": "specifies",
+    "from": "requirement-tirzah-04",
+    "to": "model-revisions",
+    "rationale": "This requirement constrains the model-revisions interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-05-specifies-model-revisions",
+    "type": "specifies",
+    "from": "requirement-tirzah-05",
+    "to": "model-revisions",
+    "rationale": "This requirement constrains the model-revisions interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-06-specifies-model-revisions",
+    "type": "specifies",
+    "from": "requirement-tirzah-06",
+    "to": "model-revisions",
+    "rationale": "This requirement constrains the model-revisions interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-07-specifies-model-search",
+    "type": "specifies",
+    "from": "requirement-tirzah-07",
+    "to": "model-search",
+    "rationale": "This requirement constrains the model-search interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-08-specifies-model-search",
+    "type": "specifies",
+    "from": "requirement-tirzah-08",
+    "to": "model-search",
+    "rationale": "This requirement constrains the model-search interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-09-specifies-model-search",
+    "type": "specifies",
+    "from": "requirement-tirzah-09",
+    "to": "model-search",
+    "rationale": "This requirement constrains the model-search interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-10-specifies-model-search",
+    "type": "specifies",
+    "from": "requirement-tirzah-10",
+    "to": "model-search",
+    "rationale": "This requirement constrains the model-search interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-11-specifies-model-evidence-read",
+    "type": "specifies",
+    "from": "requirement-tirzah-11",
+    "to": "model-evidence-read",
+    "rationale": "This requirement constrains the model-evidence-read interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-12-specifies-model-evidence-read",
+    "type": "specifies",
+    "from": "requirement-tirzah-12",
+    "to": "model-evidence-read",
+    "rationale": "This requirement constrains the model-evidence-read interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-13-specifies-model-evidence-read",
+    "type": "specifies",
+    "from": "requirement-tirzah-13",
+    "to": "model-evidence-read",
+    "rationale": "This requirement constrains the model-evidence-read interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-14-specifies-model-navigation",
+    "type": "specifies",
+    "from": "requirement-tirzah-14",
+    "to": "model-navigation",
+    "rationale": "This requirement constrains the model-navigation interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-15-specifies-model-navigation",
+    "type": "specifies",
+    "from": "requirement-tirzah-15",
+    "to": "model-navigation",
+    "rationale": "This requirement constrains the model-navigation interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-16-specifies-model-answer",
+    "type": "specifies",
+    "from": "requirement-tirzah-16",
+    "to": "model-answer",
+    "rationale": "This requirement constrains the model-answer interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-17-specifies-model-answer",
+    "type": "specifies",
+    "from": "requirement-tirzah-17",
+    "to": "model-answer",
+    "rationale": "This requirement constrains the model-answer interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-18-specifies-model-access",
+    "type": "specifies",
+    "from": "requirement-tirzah-18",
+    "to": "model-access",
+    "rationale": "This requirement constrains the model-access interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-19-specifies-model-access",
+    "type": "specifies",
+    "from": "requirement-tirzah-19",
+    "to": "model-access",
+    "rationale": "This requirement constrains the model-access interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-20-specifies-model-access",
+    "type": "specifies",
+    "from": "requirement-tirzah-20",
+    "to": "model-access",
+    "rationale": "This requirement constrains the model-access interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-21-specifies-model-historical",
+    "type": "specifies",
+    "from": "requirement-tirzah-21",
+    "to": "model-historical",
+    "rationale": "This requirement constrains the model-historical interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-22-specifies-model-historical",
+    "type": "specifies",
+    "from": "requirement-tirzah-22",
+    "to": "model-historical",
+    "rationale": "This requirement constrains the model-historical interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-23-specifies-model-historical",
+    "type": "specifies",
+    "from": "requirement-tirzah-23",
+    "to": "model-historical",
+    "rationale": "This requirement constrains the model-historical interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-24-specifies-model-capabilities",
+    "type": "specifies",
+    "from": "requirement-tirzah-24",
+    "to": "model-capabilities",
+    "rationale": "This requirement constrains the model-capabilities interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-25-specifies-model-capabilities",
+    "type": "specifies",
+    "from": "requirement-tirzah-25",
+    "to": "model-capabilities",
+    "rationale": "This requirement constrains the model-capabilities interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-26-specifies-model-capabilities",
+    "type": "specifies",
+    "from": "requirement-tirzah-26",
+    "to": "model-capabilities",
+    "rationale": "This requirement constrains the model-capabilities interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-27-specifies-model-local-operation",
+    "type": "specifies",
+    "from": "requirement-tirzah-27",
+    "to": "model-local-operation",
+    "rationale": "This requirement constrains the model-local-operation interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-28-specifies-model-local-operation",
+    "type": "specifies",
+    "from": "requirement-tirzah-28",
+    "to": "model-local-operation",
+    "rationale": "This requirement constrains the model-local-operation interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-29-specifies-model-conformance",
+    "type": "specifies",
+    "from": "requirement-tirzah-29",
+    "to": "model-conformance",
+    "rationale": "This requirement constrains the model-conformance interaction and provides testable behaviour."
+  },
+  {
+    "id": "requirement-tirzah-30-specifies-model-conformance",
+    "type": "specifies",
+    "from": "requirement-tirzah-30",
+    "to": "model-conformance",
+    "rationale": "This requirement constrains the model-conformance interaction and provides testable behaviour."
+  },
+  {
+    "id": "decision-u01-revision-pinning-constrains-requirement-tirzah-04",
+    "type": "constrains",
+    "from": "decision-u01-revision-pinning",
+    "to": "requirement-tirzah-04",
+    "rationale": "The joint architectural decision decision-u01-revision-pinning sets a binding constraint on requirement requirement-tirzah-04."
+  },
+  {
+    "id": "decision-u01-revision-pinning-constrains-requirement-tirzah-05",
+    "type": "constrains",
+    "from": "decision-u01-revision-pinning",
+    "to": "requirement-tirzah-05",
+    "rationale": "The joint architectural decision decision-u01-revision-pinning sets a binding constraint on requirement requirement-tirzah-05."
+  },
+  {
+    "id": "decision-u01-revision-pinning-constrains-requirement-tirzah-06",
+    "type": "constrains",
+    "from": "decision-u01-revision-pinning",
+    "to": "requirement-tirzah-06",
+    "rationale": "The joint architectural decision decision-u01-revision-pinning sets a binding constraint on requirement requirement-tirzah-06."
+  },
+  {
+    "id": "decision-u01-revision-pinning-constrains-requirement-tirzah-11",
+    "type": "constrains",
+    "from": "decision-u01-revision-pinning",
+    "to": "requirement-tirzah-11",
+    "rationale": "The joint architectural decision decision-u01-revision-pinning sets a binding constraint on requirement requirement-tirzah-11."
+  },
+  {
+    "id": "decision-u01-revision-pinning-constrains-requirement-tirzah-12",
+    "type": "constrains",
+    "from": "decision-u01-revision-pinning",
+    "to": "requirement-tirzah-12",
+    "rationale": "The joint architectural decision decision-u01-revision-pinning sets a binding constraint on requirement requirement-tirzah-12."
+  },
+  {
+    "id": "decision-u01-revision-pinning-constrains-requirement-tirzah-13",
+    "type": "constrains",
+    "from": "decision-u01-revision-pinning",
+    "to": "requirement-tirzah-13",
+    "rationale": "The joint architectural decision decision-u01-revision-pinning sets a binding constraint on requirement requirement-tirzah-13."
+  },
+  {
+    "id": "decision-u01-revision-pinning-constrains-requirement-tirzah-29",
+    "type": "constrains",
+    "from": "decision-u01-revision-pinning",
+    "to": "requirement-tirzah-29",
+    "rationale": "The joint architectural decision decision-u01-revision-pinning sets a binding constraint on requirement requirement-tirzah-29."
+  },
+  {
+    "id": "decision-u02-keturah-contracts-constrains-requirement-tirzah-07",
+    "type": "constrains",
+    "from": "decision-u02-keturah-contracts",
+    "to": "requirement-tirzah-07",
+    "rationale": "The joint architectural decision decision-u02-keturah-contracts sets a binding constraint on requirement requirement-tirzah-07."
+  },
+  {
+    "id": "decision-u02-keturah-contracts-constrains-requirement-tirzah-09",
+    "type": "constrains",
+    "from": "decision-u02-keturah-contracts",
+    "to": "requirement-tirzah-09",
+    "rationale": "The joint architectural decision decision-u02-keturah-contracts sets a binding constraint on requirement requirement-tirzah-09."
+  },
+  {
+    "id": "decision-u02-keturah-contracts-constrains-requirement-tirzah-11",
+    "type": "constrains",
+    "from": "decision-u02-keturah-contracts",
+    "to": "requirement-tirzah-11",
+    "rationale": "The joint architectural decision decision-u02-keturah-contracts sets a binding constraint on requirement requirement-tirzah-11."
+  },
+  {
+    "id": "decision-u02-keturah-contracts-constrains-requirement-tirzah-24",
+    "type": "constrains",
+    "from": "decision-u02-keturah-contracts",
+    "to": "requirement-tirzah-24",
+    "rationale": "The joint architectural decision decision-u02-keturah-contracts sets a binding constraint on requirement requirement-tirzah-24."
+  },
+  {
+    "id": "decision-u02-keturah-contracts-constrains-requirement-tirzah-25",
+    "type": "constrains",
+    "from": "decision-u02-keturah-contracts",
+    "to": "requirement-tirzah-25",
+    "rationale": "The joint architectural decision decision-u02-keturah-contracts sets a binding constraint on requirement requirement-tirzah-25."
+  },
+  {
+    "id": "decision-u02-keturah-contracts-constrains-requirement-tirzah-26",
+    "type": "constrains",
+    "from": "decision-u02-keturah-contracts",
+    "to": "requirement-tirzah-26",
+    "rationale": "The joint architectural decision decision-u02-keturah-contracts sets a binding constraint on requirement requirement-tirzah-26."
+  },
+  {
+    "id": "decision-u02-keturah-contracts-constrains-requirement-tirzah-30",
+    "type": "constrains",
+    "from": "decision-u02-keturah-contracts",
+    "to": "requirement-tirzah-30",
+    "rationale": "The joint architectural decision decision-u02-keturah-contracts sets a binding constraint on requirement requirement-tirzah-30."
+  },
+  {
+    "id": "decision-u03-audited-history-constrains-requirement-tirzah-13",
+    "type": "constrains",
+    "from": "decision-u03-audited-history",
+    "to": "requirement-tirzah-13",
+    "rationale": "The joint architectural decision decision-u03-audited-history sets a binding constraint on requirement requirement-tirzah-13."
+  },
+  {
+    "id": "decision-u03-audited-history-constrains-requirement-tirzah-15",
+    "type": "constrains",
+    "from": "decision-u03-audited-history",
+    "to": "requirement-tirzah-15",
+    "rationale": "The joint architectural decision decision-u03-audited-history sets a binding constraint on requirement requirement-tirzah-15."
+  },
+  {
+    "id": "decision-u03-audited-history-constrains-requirement-tirzah-18",
+    "type": "constrains",
+    "from": "decision-u03-audited-history",
+    "to": "requirement-tirzah-18",
+    "rationale": "The joint architectural decision decision-u03-audited-history sets a binding constraint on requirement requirement-tirzah-18."
+  },
+  {
+    "id": "decision-u03-audited-history-constrains-requirement-tirzah-20",
+    "type": "constrains",
+    "from": "decision-u03-audited-history",
+    "to": "requirement-tirzah-20",
+    "rationale": "The joint architectural decision decision-u03-audited-history sets a binding constraint on requirement requirement-tirzah-20."
+  },
+  {
+    "id": "decision-u03-audited-history-constrains-requirement-tirzah-21",
+    "type": "constrains",
+    "from": "decision-u03-audited-history",
+    "to": "requirement-tirzah-21",
+    "rationale": "The joint architectural decision decision-u03-audited-history sets a binding constraint on requirement requirement-tirzah-21."
+  },
+  {
+    "id": "decision-u03-audited-history-constrains-requirement-tirzah-22",
+    "type": "constrains",
+    "from": "decision-u03-audited-history",
+    "to": "requirement-tirzah-22",
+    "rationale": "The joint architectural decision decision-u03-audited-history sets a binding constraint on requirement requirement-tirzah-22."
+  },
+  {
+    "id": "decision-u03-audited-history-constrains-requirement-tirzah-23",
+    "type": "constrains",
+    "from": "decision-u03-audited-history",
+    "to": "requirement-tirzah-23",
+    "rationale": "The joint architectural decision decision-u03-audited-history sets a binding constraint on requirement requirement-tirzah-23."
+  },
+  {
+    "id": "decision-u03-audited-history-constrains-requirement-tirzah-29",
+    "type": "constrains",
+    "from": "decision-u03-audited-history",
+    "to": "requirement-tirzah-29",
+    "rationale": "The joint architectural decision decision-u03-audited-history sets a binding constraint on requirement requirement-tirzah-29."
+  },
+  {
+    "id": "policy-source-authority-constrains-requirement-tirzah-01",
+    "type": "constrains",
+    "from": "policy-source-authority",
+    "to": "requirement-tirzah-01",
+    "rationale": "The stated policy policy-source-authority defines an enforceable boundary for requirement requirement-tirzah-01."
+  },
+  {
+    "id": "policy-source-authority-constrains-requirement-tirzah-02",
+    "type": "constrains",
+    "from": "policy-source-authority",
+    "to": "requirement-tirzah-02",
+    "rationale": "The stated policy policy-source-authority defines an enforceable boundary for requirement requirement-tirzah-02."
+  },
+  {
+    "id": "policy-source-authority-constrains-requirement-tirzah-12",
+    "type": "constrains",
+    "from": "policy-source-authority",
+    "to": "requirement-tirzah-12",
+    "rationale": "The stated policy policy-source-authority defines an enforceable boundary for requirement requirement-tirzah-12."
+  },
+  {
+    "id": "policy-source-authority-constrains-requirement-tirzah-16",
+    "type": "constrains",
+    "from": "policy-source-authority",
+    "to": "requirement-tirzah-16",
+    "rationale": "The stated policy policy-source-authority defines an enforceable boundary for requirement requirement-tirzah-16."
+  },
+  {
+    "id": "policy-eligibility-first-constrains-requirement-tirzah-08",
+    "type": "constrains",
+    "from": "policy-eligibility-first",
+    "to": "requirement-tirzah-08",
+    "rationale": "The stated policy policy-eligibility-first defines an enforceable boundary for requirement requirement-tirzah-08."
+  },
+  {
+    "id": "policy-eligibility-first-constrains-requirement-tirzah-13",
+    "type": "constrains",
+    "from": "policy-eligibility-first",
+    "to": "requirement-tirzah-13",
+    "rationale": "The stated policy policy-eligibility-first defines an enforceable boundary for requirement requirement-tirzah-13."
+  },
+  {
+    "id": "policy-eligibility-first-constrains-requirement-tirzah-18",
+    "type": "constrains",
+    "from": "policy-eligibility-first",
+    "to": "requirement-tirzah-18",
+    "rationale": "The stated policy policy-eligibility-first defines an enforceable boundary for requirement requirement-tirzah-18."
+  },
+  {
+    "id": "policy-eligibility-first-constrains-requirement-tirzah-19",
+    "type": "constrains",
+    "from": "policy-eligibility-first",
+    "to": "requirement-tirzah-19",
+    "rationale": "The stated policy policy-eligibility-first defines an enforceable boundary for requirement requirement-tirzah-19."
+  },
+  {
+    "id": "policy-eligibility-first-constrains-requirement-tirzah-20",
+    "type": "constrains",
+    "from": "policy-eligibility-first",
+    "to": "requirement-tirzah-20",
+    "rationale": "The stated policy policy-eligibility-first defines an enforceable boundary for requirement requirement-tirzah-20."
+  }
+]
